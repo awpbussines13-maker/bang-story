@@ -4,7 +4,16 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { cpus } from 'node:os'
 import { join } from 'node:path'
 import { once } from 'node:events'
-import { app, shell } from 'electron'
+let electronApp: any, electronShell: any
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const el = require('electron')
+  electronApp = el?.app
+  electronShell = el?.shell
+} catch {
+  electronApp = null
+  electronShell = null
+}
 import ffmpegStatic from 'ffmpeg-static'
 import type { WhisperStatus } from '@shared/types'
 import { alignWords, splitHeard, type Heard } from './align'
@@ -32,7 +41,9 @@ export function modelDir(): string {
 const modelPath = (): string => join(modelDir(), MODEL.file)
 
 function cliPath(): string {
-  return app.isPackaged ? join(process.resourcesPath, 'whisper', 'whisper-cli.exe') : join(app.getAppPath(), 'resources', 'whisper', 'whisper-cli.exe')
+  if (electronApp?.isPackaged) return join(process.resourcesPath, 'whisper', 'whisper-cli.exe')
+  if (electronApp?.getAppPath) return join(electronApp.getAppPath(), 'resources', 'whisper', 'whisper-cli.exe')
+  return join(process.cwd(), 'resources', 'whisper', 'whisper-cli.exe')
 }
 
 let download: { ctrl: AbortController; received: number; phase: 'downloading' | 'verifying' } | null = null
@@ -81,7 +92,7 @@ export async function downloadModel(): Promise<void> {
     if (download.received < MODEL.bytes) {
       const have = download.received
       // Development builds can fetch from a local copy (STUDIO_WHISPER_URL) to test resuming.
-      const url = (!app.isPackaged && process.env.STUDIO_WHISPER_URL) || MODEL.url
+      const url = (!electronApp?.isPackaged && process.env.STUDIO_WHISPER_URL) || MODEL.url
       const res = await fetch(url, { headers: have ? { Range: `bytes=${have}-` } : {}, signal: ctrl.signal })
       if (!res.ok || !res.body) throw new Error(`Unduhan gagal (HTTP ${res.status})`)
       const resumed = res.status === 206
@@ -127,7 +138,7 @@ export function removeModel(): void {
 }
 
 export function openModelFolder(): void {
-  void shell.openPath(modelDir())
+  if (electronShell?.openPath) void electronShell.openPath(modelDir())
 }
 
 /** Whisper's language codes differ from ours only for Javanese. */

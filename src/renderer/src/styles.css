@@ -35,94 +35,94 @@
 
 @font-face {
   font-family: 'Poppins';
-  src: url('studio://fonts/Poppins-Medium.ttf') format('truetype');
+  src: url('/api/fonts/Poppins-Medium.ttf') format('truetype');
   font-weight: 500;
 }
 @font-face {
   font-family: 'Poppins';
-  src: url('studio://fonts/Poppins-SemiBold.ttf') format('truetype');
+  src: url('/api/fonts/Poppins-SemiBold.ttf') format('truetype');
   font-weight: 600;
 }
 @font-face {
   font-family: 'Poppins';
-  src: url('studio://fonts/Poppins-Bold.ttf') format('truetype');
+  src: url('/api/fonts/Poppins-Bold.ttf') format('truetype');
   font-weight: 700;
 }
 @font-face {
   font-family: 'Poppins';
-  src: url('studio://fonts/Poppins-ExtraBold.ttf') format('truetype');
+  src: url('/api/fonts/Poppins-ExtraBold.ttf') format('truetype');
   font-weight: 800;
 }
 
 /* Caption fonts (the same files libass uses for the export). */
 @font-face {
   font-family: 'Anton';
-  src: url('studio://fonts/Anton-Regular.ttf') format('truetype');
+  src: url('/api/fonts/Anton-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Bebas Neue';
-  src: url('studio://fonts/BebasNeue-Regular.ttf') format('truetype');
+  src: url('/api/fonts/BebasNeue-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Archivo Black';
-  src: url('studio://fonts/ArchivoBlack-Regular.ttf') format('truetype');
+  src: url('/api/fonts/ArchivoBlack-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Lilita One';
-  src: url('studio://fonts/LilitaOne-Regular.ttf') format('truetype');
+  src: url('/api/fonts/LilitaOne-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Titan One';
-  src: url('studio://fonts/TitanOne-Regular.ttf') format('truetype');
+  src: url('/api/fonts/TitanOne-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Luckiest Guy';
-  src: url('studio://fonts/LuckiestGuy-Regular.ttf') format('truetype');
+  src: url('/api/fonts/LuckiestGuy-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Comic Neue';
-  src: url('studio://fonts/ComicNeue-Bold.ttf') format('truetype');
+  src: url('/api/fonts/ComicNeue-Bold.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Chewy';
-  src: url('studio://fonts/Chewy-Regular.ttf') format('truetype');
+  src: url('/api/fonts/Chewy-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Bubblegum Sans';
-  src: url('studio://fonts/BubblegumSans-Regular.ttf') format('truetype');
+  src: url('/api/fonts/BubblegumSans-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Boogaloo';
-  src: url('studio://fonts/Boogaloo-Regular.ttf') format('truetype');
+  src: url('/api/fonts/Boogaloo-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Sniglet';
-  src: url('studio://fonts/Sniglet-ExtraBold.ttf') format('truetype');
+  src: url('/api/fonts/Sniglet-ExtraBold.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Bangers';
-  src: url('studio://fonts/Bangers-Regular.ttf') format('truetype');
+  src: url('/api/fonts/Bangers-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'Permanent Marker';
-  src: url('studio://fonts/PermanentMarker-Regular.ttf') format('truetype');
+  src: url('/api/fonts/PermanentMarker-Regular.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'DM Serif Display';
-  src: url('studio://fonts/DMSerifDisplay-Regular.ttf') format('truetype');
+  src: url('/api/fonts/DMSerifDisplay-Regular.ttf') format('truetype');
   font-display: swap;
 }
 

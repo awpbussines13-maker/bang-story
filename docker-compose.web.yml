@@ -1,0 +1,15 @@
+services:
+  bang-story-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: bang-story-web:local
+    container_name: bang-story-web
+    restart: unless-stopped
+    ports:
+      - "3009:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - DATA_DIR=/app/data

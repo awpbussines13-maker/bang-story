@@ -1,4 +1,10 @@
-import { safeStorage } from 'electron'
+let safeStorage: any
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  safeStorage = require('electron')?.safeStorage
+} catch {
+  safeStorage = null
+}
 import type { ApiProvider, KeyStatus } from '@shared/types'
 import { getDb } from './db'
 import { getSettings } from './settings'
@@ -29,7 +35,7 @@ interface SecretRow {
  */
 export function warmUpEncryption(): void {
   try {
-    if (safeStorage.isEncryptionAvailable()) safeStorage.encryptString('bang-story')
+    if (safeStorage?.isEncryptionAvailable?.()) safeStorage.encryptString('bang-story')
   } catch {
     // Encryption unavailable; keys fall back to plain storage below.
   }
@@ -37,7 +43,7 @@ export function warmUpEncryption(): void {
 
 function decrypt(value: Buffer): string | null {
   try {
-    return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(value) : value.toString('utf8')
+    return safeStorage?.isEncryptionAvailable?.() ? safeStorage.decryptString(value) : value.toString('utf8')
   } catch {
     return null
   }
@@ -53,7 +59,7 @@ function row(provider: ApiProvider): SecretRow | undefined {
 }
 
 export function setSecret(provider: ApiProvider, value: string): void {
-  const enc = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(value) : Buffer.from(value, 'utf8')
+  const enc = safeStorage?.isEncryptionAvailable?.() ? safeStorage.encryptString(value) : Buffer.from(value, 'utf8')
   getDb()
     .prepare(
       `INSERT INTO secrets (provider, value) VALUES (?, ?)

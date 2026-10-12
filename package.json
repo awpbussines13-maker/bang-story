@@ -10,6 +10,9 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "build:server": "esbuild src/server/index.ts --bundle --platform=node --target=node22 --outfile=out/server.cjs --format=cjs --external:better-sqlite3 --external:electron --external:ffmpeg-static --alias:@shared=./src/shared",
+    "build:web": "electron-vite build && npm run build:server",
+    "start:web": "node out/server.cjs",
     "preview": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",

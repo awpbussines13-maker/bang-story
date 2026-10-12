@@ -1,13 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { extname } from 'node:path'
-import { app } from 'electron'
+let electronApp: any
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  electronApp = require('electron')?.app
+} catch {
+  electronApp = null
+}
 import type { CreditEstimate, KeyTestResult } from '@shared/types'
 import { getSecret, requireSecret } from '../secrets'
 import { ApiError, readError, sleep } from './http'
 
 // Development builds can point at a local mock (STUDIO_HF_BASE) to test the UI without spending credits.
-const BASE = (!app.isPackaged && process.env.STUDIO_HF_BASE) || 'https://api.higgsfield.ai'
+const BASE = (!electronApp?.isPackaged && process.env.STUDIO_HF_BASE) || 'https://api.higgsfield.ai'
 
 export type HfStatus = 'queued' | 'in_progress' | 'completed' | 'failed' | 'nsfw' | 'canceled'
 

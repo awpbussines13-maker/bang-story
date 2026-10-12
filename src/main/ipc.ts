@@ -1,7 +1,24 @@
 import { randomUUID } from 'node:crypto'
 import { copyFileSync, mkdirSync } from 'node:fs'
 import { basename, dirname, extname, join } from 'node:path'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
+let electronApp: any, electronBW: any, electronClip: any, electronDialog: any, electronIpc: any, electronShell: any
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const el = require('electron')
+  electronApp = el?.app
+  electronBW = el?.BrowserWindow
+  electronClip = el?.clipboard
+  electronDialog = el?.dialog
+  electronIpc = el?.ipcMain
+  electronShell = el?.shell
+} catch {
+  electronApp = null
+  electronBW = null
+  electronClip = null
+  electronDialog = null
+  electronIpc = null
+  electronShell = null
+}
 import type {
   ApiProvider,
   AppSettings,
@@ -55,18 +72,28 @@ import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
 import { generateScript, generateVisuals, generateMusicPrompt } from './story'
 
-
 type Handler = (...args: any[]) => unknown
 
+export const handlers = new Map<string, Handler>()
+
 function handle(channel: string, fn: Handler): void {
-  ipcMain.handle(channel, async (_e, ...args) => {
-    try {
-      return await fn(...args)
-    } catch (e) {
-      // Only the message crosses the IPC boundary; keep it readable for the user.
-      throw new Error((e as Error)?.message ?? String(e))
-    }
-  })
+  handlers.set(channel, fn)
+  if (electronIpc?.handle) {
+    electronIpc.handle(channel, async (_e: any, ...args: any[]) => {
+      try {
+        return await fn(...args)
+      } catch (e) {
+        // Only the message crosses the IPC boundary; keep it readable for the user.
+        throw new Error((e as Error)?.message ?? String(e))
+      }
+    })
+  }
+}
+
+export async function dispatch(channel: string, args: any[] = []): Promise<unknown> {
+  const fn = handlers.get(channel)
+  if (!fn) throw new Error(`Unknown handler: ${channel}`)
+  return fn(...args)
 }
 
 async function testProvider(provider: ApiProvider, key?: string): Promise<KeyTestResult> {
@@ -76,7 +103,13 @@ async function testProvider(provider: ApiProvider, key?: string): Promise<KeyTes
 }
 
 function defaultExportFolder(): string {
-  return getSettings().exportFolder ?? join(app.getPath('videos'), 'Bang Story')
+  if (getSettings().exportFolder) return getSettings().exportFolder!
+  if (electronApp?.getPath) {
+    try {
+      return join(electronApp.getPath('videos'), 'Bang Story')
+    } catch {}
+  }
+  return join(process.env.DATA_DIR || join(process.cwd(), 'data'), 'exports')
 }
 
 export function registerIpc(): void {
@@ -130,8 +163,9 @@ export function registerIpc(): void {
     return fresh
   })
   handle('assets:pickMusic', async (projectId: string) => {
-    const win = BrowserWindow.getFocusedWindow()
-    const res = await dialog.showOpenDialog(win!, {
+    const win = electronBW?.getFocusedWindow?.()
+    if (!electronDialog?.showOpenDialog) return null
+    const res = await electronDialog.showOpenDialog(win!, {
       title: 'Pilih musik latar',
       filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'm4a', 'ogg'] }],
       properties: ['openFile']
@@ -155,8 +189,9 @@ export function registerIpc(): void {
   })
 
   handle('assets:pickImage', async (projectId: string) => {
-    const win = BrowserWindow.getFocusedWindow()
-    const res = await dialog.showOpenDialog(win!, {
+    const win = electronBW?.getFocusedWindow?.()
+    if (!electronDialog?.showOpenDialog) return null
+    const res = await electronDialog.showOpenDialog(win!, {
       title: 'Pilih gambar logo atau watermark',
       filters: [{ name: 'Gambar', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
       properties: ['openFile']
@@ -226,8 +261,9 @@ export function registerIpc(): void {
   handle('export:start', (projectId: string, opts: ExportOptions) => startExport(projectId, opts))
   handle('export:defaultFolder', () => defaultExportFolder())
   handle('export:pickFolder', async () => {
-    const win = BrowserWindow.getFocusedWindow()
-    const res = await dialog.showOpenDialog(win!, {
+    const win = electronBW?.getFocusedWindow?.()
+    if (!electronDialog?.showOpenDialog) return defaultExportFolder()
+    const res = await electronDialog.showOpenDialog(win!, {
       title: 'Pilih folder ekspor',
       defaultPath: defaultExportFolder(),
       properties: ['openDirectory', 'createDirectory']
@@ -236,12 +272,16 @@ export function registerIpc(): void {
     setSettings({ exportFolder: res.filePaths[0] })
     return res.filePaths[0]
   })
-  handle('export:reveal', (path: string) => shell.showItemInFolder(path))
+  handle('export:reveal', (path: string) => {
+    if (electronShell?.showItemInFolder) electronShell.showItemInFolder(path)
+  })
 
-  handle('app:version', () => app.getVersion())
-  handle('app:copyText', (text: string) => clipboard.writeText(String(text)))
+  handle('app:version', () => electronApp?.getVersion?.() ?? '1.0.0-web')
+  handle('app:copyText', (text: string) => {
+    if (electronClip?.writeText) electronClip.writeText(String(text))
+  })
   handle('app:openExternal', (url: string) => {
-    if (/^https:\/\//i.test(url)) return shell.openExternal(url)
+    if (electronShell?.openExternal && /^https:\/\//i.test(url)) return electronShell.openExternal(url)
     return undefined
   })
 }

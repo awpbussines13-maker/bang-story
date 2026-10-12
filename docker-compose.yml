@@ -1,0 +1,13 @@
+services:
+  bang-story:
+    build: .
+    image: bang-story:local
+    container_name: bang-story
+    restart: unless-stopped
+    ports:
+      - "6080:6080"
+    volumes:
+      - ./data:/root/.config/Bang Story
+    environment:
+      - RESOLUTION=1440x900x24
+    shm_size: 1gb
