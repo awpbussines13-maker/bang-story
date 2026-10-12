@@ -5,7 +5,7 @@ import { cx } from './ui'
 export function Toasts() {
   const { toasts, dismiss } = useApp()
   return (
-    <div className="pointer-events-none fixed bottom-6 right-6 z-[60] flex w-[380px] flex-col gap-2.5">
+    <div className="pointer-events-none fixed bottom-4 right-4 sm:bottom-6 sm:right-6 left-4 sm:left-auto z-[60] flex max-w-[calc(100vw-2rem)] sm:w-[380px] flex-col gap-2.5">
       {toasts.map((t) => (
         <div
           key={t.id}

@@ -61,8 +61,8 @@ export function ProjectHeader({ doneSteps, right }: { doneSteps: Step[]; right?:
   }
 
   return (
-    <header className="grid h-[68px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 border-b border-line bg-surface px-6">
-      <div className="flex min-w-0 items-center gap-3">
+    <header className="flex h-auto min-h-[64px] sm:h-[68px] shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 sm:px-6 py-2.5 sm:py-0">
+      <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
         <IconButton
           label="Kembali ke beranda"
           onClick={async () => {
@@ -87,11 +87,11 @@ export function ProjectHeader({ doneSteps, right }: { doneSteps: Step[]; right?:
                   if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                   if (e.key === 'Escape') setEditing(false)
                 }}
-                className="h-8 w-[320px] rounded-lg border border-ink bg-surface px-2 font-display text-lg font-bold outline-none"
+                className="h-8 w-full max-w-[200px] sm:w-[320px] rounded-lg border border-ink bg-surface px-2 font-display text-base sm:text-lg font-bold outline-none"
               />
             ) : (
               <>
-                <span className="truncate font-display text-lg font-bold">{project.title}</span>
+                <span className="truncate max-w-[150px] sm:max-w-[260px] font-display text-base sm:text-lg font-bold">{project.title}</span>
                 <button
                   type="button"
                   aria-label="Ganti nama proyek"
@@ -107,7 +107,7 @@ export function ProjectHeader({ doneSteps, right }: { doneSteps: Step[]; right?:
         </div>
       </div>
 
-      <nav aria-label="Langkah pembuatan" className="flex items-center gap-1 rounded-full border border-line bg-sand p-1">
+      <nav aria-label="Langkah pembuatan" className="order-3 sm:order-2 flex max-w-full overflow-x-auto items-center gap-1 rounded-full border border-line bg-sand p-1">
         {STEPS.map((s) => {
           const active = project.step === s.n
           const done = doneSteps.includes(s.n) && !active
@@ -118,25 +118,25 @@ export function ProjectHeader({ doneSteps, right }: { doneSteps: Step[]; right?:
               aria-current={active ? 'step' : undefined}
               onClick={() => setStep(s.n)}
               className={cx(
-                'inline-flex h-9 items-center gap-2 rounded-full py-0 pl-1.5 pr-4 text-sm',
+                'inline-flex h-8 sm:h-9 shrink-0 items-center gap-1.5 sm:gap-2 rounded-full py-0 pl-1.5 pr-2.5 sm:pr-4 text-xs sm:text-sm',
                 active ? 'bg-ink font-semibold text-paper' : 'font-medium text-ink-2 hover:text-ink'
               )}
             >
               <span
                 className={cx(
-                  'inline-flex size-6 items-center justify-center rounded-full text-xs',
+                  'inline-flex size-5 sm:size-6 items-center justify-center rounded-full text-[11px] sm:text-xs',
                   active ? 'bg-accent text-white' : done ? 'bg-ok-soft text-ok-ink' : 'border border-line-2 bg-surface text-ink-2'
                 )}
               >
                 {done ? <Check className="size-[13px]" strokeWidth={3} /> : s.n}
               </span>
-              {s.label}
+              <span className="hidden xs:inline">{s.label}</span>
             </button>
           )
         })}
       </nav>
 
-      <div className="flex items-center justify-end gap-2.5">
+      <div className="order-2 sm:order-3 flex items-center justify-end gap-2">
         <Button icon={<Save className="size-[17px]" />} onClick={() => void save()}>
           Simpan
           <Kbd>Ctrl S</Kbd>

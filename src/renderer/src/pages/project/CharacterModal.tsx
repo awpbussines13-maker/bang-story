@@ -57,7 +57,7 @@ function NewCharacter({ onClose, onCreated }: { onClose: () => void; onCreated?:
         <UserPlus className="size-6 text-muted" />
         Lembar karakter dibuat setelah pemeran disimpan.
       </div>
-      <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-4">
         <Field label="Nama">
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Misal: Gajah Mada" className={cx(inputCls, 'h-11')} />
         </Field>
@@ -138,7 +138,7 @@ function EditCharacter({ characterId, onClose }: { characterId: string | null; o
           </div>
         )}
       </div>
-      <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-4">
         <Field label="Nama">
           <input value={c.name} onChange={(e) => updateCharacter(c.id, { name: e.target.value })} className={cx(inputCls, 'h-11')} />
         </Field>

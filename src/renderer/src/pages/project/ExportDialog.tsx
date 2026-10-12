@@ -135,7 +135,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
               <span className="flex items-center border-l border-line-2 bg-sand px-3.5 font-mono text-sm text-ink-2">.mp4</span>
             </div>
           </label>
-          <div className="grid grid-cols-[minmax(0,1fr)_170px] gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_170px] gap-3.5">
             <div className="flex flex-col gap-1.5">
               <span className="text-sm font-semibold">Resolusi</span>
               <div className="grid grid-cols-3 gap-1.5">
@@ -205,7 +205,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
               </Button>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2 rounded-[14px] bg-sand px-3.5 py-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-[14px] bg-sand px-3.5 py-3">
             <div className="flex flex-col">
               <span className="text-xs text-ink-2">Durasi</span>
               <span className="font-mono text-base font-semibold">{mmss(totalMs)}</span>

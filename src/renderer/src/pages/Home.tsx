@@ -146,9 +146,9 @@ export function Home() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-[68px] shrink-0 items-center gap-6 border-b border-line bg-surface px-8">
+      <header className="flex h-auto min-h-[64px] shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 sm:px-8 py-3">
         <Logo />
-        <label className="flex h-10 w-[360px] items-center gap-2 rounded-full border border-line bg-sand px-3.5 text-muted">
+        <label className="order-3 flex h-10 w-full sm:order-none sm:w-[320px] md:w-[360px] items-center gap-2 rounded-full border border-line bg-sand px-3.5 text-muted">
           <Search className="size-[18px]" />
           <input
             type="search"
@@ -159,7 +159,7 @@ export function Home() {
             className="flex-1 bg-transparent text-sm text-ink outline-none"
           />
         </label>
-        <div className="flex-1" />
+        <div className="hidden sm:block sm:flex-1" />
         <Button icon={<SlidersHorizontal className="size-[18px]" />} onClick={() => go({ name: 'settings', back: { name: 'home' } })}>
           Pengaturan
           {setupIssues.length > 0 && <span className="size-2 rounded-full bg-accent" />}
@@ -167,7 +167,7 @@ export function Home() {
       </header>
 
       <main className="scroll-thin flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-[1280px] flex-col gap-5 px-12 pt-11">
+        <div className="mx-auto flex max-w-[1280px] flex-col gap-5 px-4 sm:px-8 md:px-12 pt-6 sm:pt-11">
           {setupIssues.length > 0 && (
             <div className="flex items-center gap-3 rounded-2xl border border-sun bg-sun-soft px-4 py-3 text-sm text-sun-ink">
               <AlertTriangle className="size-[18px] shrink-0" />
@@ -181,12 +181,12 @@ export function Home() {
             </div>
           )}
           <div>
-            <h1 className="font-display text-[46px] font-bold leading-[1.08] tracking-[-0.025em]">Mau bikin video apa hari ini?</h1>
-            <p className="mt-3 text-[17px] text-ink-2">
+            <h1 className="font-display text-3xl sm:text-[46px] font-bold leading-[1.1] sm:leading-[1.08] tracking-[-0.025em]">Mau bikin video apa hari ini?</h1>
+            <p className="mt-2 sm:mt-3 text-sm sm:text-[17px] text-ink-2">
               Tulis idenya. AI menyusun klip, naskah, dan suaranya, lalu kamu tinggal merapikan di editor.
             </p>
           </div>
-          <div className="flex flex-col gap-3 rounded-[18px] border-[1.5px] border-ink bg-surface py-5 pl-6 pr-5 shadow-ink-lg">
+          <div className="flex flex-col gap-3 rounded-[18px] border-[1.5px] border-ink bg-surface p-4 sm:py-5 sm:pl-6 sm:pr-5 shadow-ink sm:shadow-ink-lg">
             <label htmlFor="ide" className="text-[13px] font-semibold text-ink-2">
               Ide cerita atau sinopsis
             </label>
@@ -196,29 +196,31 @@ export function Home() {
               value={synopsis}
               onChange={(e) => setSynopsis(e.target.value)}
               placeholder="Contoh: Gajah Mada bersumpah tidak akan menikmati palapa sebelum Nusantara bersatu. Para menteri menertawakannya, tapi dia membuktikannya…"
-              className="resize-none bg-transparent text-lg leading-relaxed outline-none placeholder:text-muted/70"
+              className="resize-none bg-transparent text-base sm:text-lg leading-relaxed outline-none placeholder:text-muted/70"
             />
-            <div className="flex flex-wrap items-center gap-2 border-t border-dashed border-line pt-3.5">
-              <Select
-                variant="pill"
-                label="Durasi"
-                value={durationSec}
-                onChange={setDurationSec}
-                options={DURATIONS.map((d) => ({ value: d.sec, label: d.label }))}
-              />
-              <Select
-                variant="pill"
-                label="Bahasa"
-                value={language}
-                onChange={setLanguage}
-                options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
-                menuWidth={200}
-              />
-              <Select variant="pill" label="Format" value={aspectRatio} onChange={setAspectRatio} options={ASPECTS} menuWidth={200} />
-              <StyleMenu value={styleId} onChange={setStyleId} />
-              <Select variant="pill" label="Suara narator" value={tts} onChange={setTts} options={ttsOptions} menuWidth={280} />
-              <div className="flex-1" />
-              <Button variant="primary" size="lg" loading={creating} onClick={() => void start()}>
+            <div className="flex flex-col sm:flex-row flex-wrap sm:items-center gap-2 border-t border-dashed border-line pt-3.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Select
+                  variant="pill"
+                  label="Durasi"
+                  value={durationSec}
+                  onChange={setDurationSec}
+                  options={DURATIONS.map((d) => ({ value: d.sec, label: d.label }))}
+                />
+                <Select
+                  variant="pill"
+                  label="Bahasa"
+                  value={language}
+                  onChange={setLanguage}
+                  options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
+                  menuWidth={200}
+                />
+                <Select variant="pill" label="Format" value={aspectRatio} onChange={setAspectRatio} options={ASPECTS} menuWidth={200} />
+                <StyleMenu value={styleId} onChange={setStyleId} />
+                <Select variant="pill" label="Suara narator" value={tts} onChange={setTts} options={ttsOptions} menuWidth={280} />
+              </div>
+              <div className="hidden sm:block sm:flex-1" />
+              <Button variant="primary" size="lg" className="w-full sm:w-auto mt-2 sm:mt-0" loading={creating} onClick={() => void start()}>
                 Mulai
                 <ArrowRight className="size-[18px]" />
               </Button>
@@ -231,7 +233,7 @@ export function Home() {
                 key={s}
                 type="button"
                 onClick={() => setSynopsis(s)}
-                className="h-9 rounded-full border border-dashed border-line-3 px-3.5 text-[13px] text-ink-2 hover:border-ink-2 hover:text-ink"
+                className="h-auto min-h-9 rounded-full border border-dashed border-line-3 px-3.5 py-1.5 text-left text-[13px] text-ink-2 hover:border-ink-2 hover:text-ink"
               >
                 {s}
               </button>
@@ -239,10 +241,10 @@ export function Home() {
           </div>
         </div>
 
-        <section className="mx-auto flex max-w-[1280px] flex-col gap-[18px] px-12 pb-12 pt-11">
-          <div className="flex items-center gap-4">
-            <h2 className="font-display text-[27px] font-bold tracking-[-0.015em]">Proyek kamu</h2>
-            <div className="ml-2 flex gap-1.5">
+        <section className="mx-auto flex max-w-[1280px] flex-col gap-[18px] px-4 sm:px-8 md:px-12 pb-12 pt-8 sm:pt-11">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 className="font-display text-2xl sm:text-[27px] font-bold tracking-[-0.015em]">Proyek kamu</h2>
+            <div className="flex flex-wrap gap-1.5">
               {FILTERS.map((f) => {
                 const count = (projects ?? []).filter((p) => f.match(p.status)).length
                 return (
@@ -255,7 +257,7 @@ export function Home() {
             </div>
           </div>
 
-          <div className="grid grid-cols-4 gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
             <button
               type="button"
               onClick={() => void start()}

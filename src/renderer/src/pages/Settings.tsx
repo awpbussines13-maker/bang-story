@@ -575,19 +575,20 @@ export function Settings() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-[68px] shrink-0 items-center gap-3.5 border-b border-line bg-surface px-8">
-        <button type="button" onClick={() => go({ name: 'home' })}>
-          <Logo />
-        </button>
-        <span className="text-xl text-line-3">/</span>
-        <span className="font-semibold">Pengaturan</span>
-        <div className="flex-1" />
+      <header className="flex h-auto min-h-[60px] sm:h-[68px] shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 sm:px-8 py-2 sm:py-0">
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={() => go({ name: 'home' })}>
+            <Logo />
+          </button>
+          <span className="text-xl text-line-3">/</span>
+          <span className="font-semibold text-sm sm:text-base">Pengaturan</span>
+        </div>
         <Button icon={<ArrowLeft className="size-[18px]" />} onClick={() => go(back)}>
           {back.name === 'project' ? 'Kembali ke proyek' : 'Kembali ke beranda'}
         </Button>
       </header>
-      <div className="grid min-h-0 flex-1 grid-cols-[280px_minmax(0,1fr)]">
-        <nav aria-label="Bagian pengaturan" className="flex flex-col gap-1 border-r border-line pl-6 pr-4 pt-7">
+      <div className="flex flex-col md:grid min-h-0 flex-1 md:grid-cols-[280px_minmax(0,1fr)]">
+        <nav aria-label="Bagian pengaturan" className="flex shrink-0 flex-row overflow-x-auto gap-2 border-b md:border-b-0 md:border-r border-line p-3 md:flex-col md:pl-6 md:pr-4 md:pt-7">
           {NAV.map((n) => (
             <button
               key={n.id}
@@ -595,7 +596,7 @@ export function Settings() {
               aria-current={tab === n.id ? 'page' : undefined}
               onClick={() => setTab(n.id)}
               className={cx(
-                'flex h-11 items-center gap-3 rounded-xl px-3.5 text-left text-[15px]',
+                'flex h-10 sm:h-11 shrink-0 items-center gap-2 sm:gap-3 rounded-xl px-3 sm:px-3.5 text-left text-xs sm:text-[15px]',
                 tab === n.id ? 'bg-ink font-semibold text-paper' : 'font-medium text-ink hover:bg-sand'
               )}
             >
@@ -605,7 +606,7 @@ export function Settings() {
           ))}
         </nav>
         <main className="scroll-thin overflow-y-auto">
-          <div className="flex max-w-[900px] flex-col gap-3.5 px-14 pb-24 pt-8">
+          <div className="flex max-w-[900px] flex-col gap-3.5 px-4 sm:px-14 pb-24 pt-6 sm:pt-8">
             {tab === 'services' && settings && (
               <>
                 <div>

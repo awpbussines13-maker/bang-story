@@ -228,12 +228,12 @@ export function Modal({
   }, [open, onClose])
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-3 sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         role="dialog"
         aria-modal="true"
-        className="scroll-thin flex max-h-full flex-col gap-5 overflow-y-auto rounded-[20px] border-[1.5px] border-ink bg-surface p-7 shadow-[6px_6px_0_#1f1d1a]"
-        style={{ width }}
+        className="scroll-thin flex max-h-[92dvh] w-full max-w-full flex-col gap-5 overflow-y-auto rounded-[20px] border-[1.5px] border-ink bg-surface p-4 sm:p-7 shadow-[6px_6px_0_#1f1d1a]"
+        style={{ width: `min(${width}px, 100%)` }}
       >
         <div className="flex items-start gap-3">
           <div className="flex-1">
