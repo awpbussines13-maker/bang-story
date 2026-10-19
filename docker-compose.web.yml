@@ -6,10 +6,9 @@ services:
     image: bang-story-web:local
     container_name: bang-story-web
     restart: unless-stopped
-    ports:
-      - "3009:3000"
+    network_mode: "host"
     volumes:
       - ./data:/app/data
     environment:
-      - PORT=3000
+      - PORT=3009
       - DATA_DIR=/app/data

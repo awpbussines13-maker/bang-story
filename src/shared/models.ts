@@ -23,6 +23,13 @@ export const LLM_PROVIDERS: { id: LlmProvider; name: string; note: string; link:
     linkLabel: 'Buat kunci di console Groq'
   },
   {
+    id: '9router',
+    name: '9Router',
+    note: 'Router AI terpusat untuk Penyusun Cerita, Suara Narator, dan Pembuat Gambar.',
+    link: 'https://yahya.web.id',
+    linkLabel: 'Buka 9Router'
+  },
+  {
     id: 'custom',
     name: 'Endpoint custom',
     note: 'Server apa pun yang kompatibel dengan OpenAI API, misalnya Ollama, LM Studio, vLLM, DeepSeek, atau xAI Grok.',

@@ -1,10 +1,11 @@
 export type ProjectStatus = 'draft' | 'script' | 'storyboard' | 'editing' | 'exported'
 export type AspectRatio = '16:9' | '9:16'
-export type TtsProvider = 'gemini' | 'elevenlabs'
-export type LlmProvider = 'gemini' | 'openrouter' | 'groq' | 'custom'
-export type ApiProvider = 'higgsfield' | 'gemini' | 'elevenlabs' | 'openrouter' | 'groq' | 'custom'
+export type TtsProvider = 'gemini' | 'elevenlabs' | '9router'
+export type LlmProvider = 'gemini' | 'openrouter' | 'groq' | 'custom' | '9router'
+export type ApiProvider = 'higgsfield' | 'gemini' | 'elevenlabs' | 'openrouter' | 'groq' | 'custom' | '9router'
+export type ImageProvider = 'higgsfield' | '9router'
 /** Where a live model list comes from: an LLM provider, or a TTS catalog. */
-export type ModelSource = LlmProvider | 'gemini-tts' | 'elevenlabs'
+export type ModelSource = LlmProvider | 'gemini-tts' | 'elevenlabs' | '9router-tts' | '9router-image'
 export type MotionType = 'camera' | 'video'
 export type CameraPresetId = 'zoomin' | 'zoomout' | 'panleft' | 'panright' | 'kenburns' | 'shake' | 'static'
 export type MotionStrength = 'halus' | 'sedang' | 'kuat'
@@ -102,6 +103,8 @@ export interface Project {
   styleId: string
   ttsProvider: TtsProvider
   ttsVoice: string
+  /** Image provider: 'higgsfield' or '9router' */
+  imageProvider?: ImageProvider
   /** Higgsfield endpoint ids; null falls back to the app default. */
   imageModel: string | null
   videoModel: string | null
@@ -249,6 +252,7 @@ export interface NewProjectInput {
   aspectRatio?: AspectRatio
   styleId?: string
   ttsProvider?: TtsProvider
+  imageProvider?: ImageProvider
 }
 
 export interface KeyStatus {
@@ -292,6 +296,11 @@ export interface AppSettings {
   videoModel: string
   /** Time captions against the real voice with Whisper after narration is made (when the model is present). */
   whisperAuto: boolean
+  /** 9Router settings */
+  nineRouterBaseUrl: string
+  nineRouterTtsModel: string
+  nineRouterImageModel: string
+  imageProvider: ImageProvider
 }
 
 /** What one Higgsfield request would cost, from the API's estimate endpoint. */

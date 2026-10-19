@@ -9,7 +9,7 @@ import type { ApiProvider, KeyStatus } from '@shared/types'
 import { getDb } from './db'
 import { getSettings } from './settings'
 
-const PROVIDERS: ApiProvider[] = ['higgsfield', 'gemini', 'elevenlabs', 'openrouter', 'groq', 'custom']
+const PROVIDERS: ApiProvider[] = ['higgsfield', 'gemini', 'elevenlabs', 'openrouter', 'groq', 'custom', '9router']
 
 export const PROVIDER_NAMES: Record<ApiProvider, string> = {
   higgsfield: 'Higgsfield',
@@ -17,7 +17,8 @@ export const PROVIDER_NAMES: Record<ApiProvider, string> = {
   elevenlabs: 'ElevenLabs',
   openrouter: 'OpenRouter',
   groq: 'Groq',
-  custom: 'endpoint custom'
+  custom: 'endpoint custom',
+  '9router': '9Router'
 }
 
 interface SecretRow {
@@ -70,7 +71,13 @@ export function setSecret(provider: ApiProvider, value: string): void {
 
 export function getSecret(provider: ApiProvider): string | null {
   const r = row(provider)
-  if (!r || r.value.length === 0) return null
+  if (!r || r.value.length === 0) {
+    if (provider === '9router') {
+      const envKey = process.env.NINEROUTER_KEY || process.env.HERMES_CUSTOM_ROUTER_OPENZ_MY_ID_API_KEY || ''
+      if (envKey) return envKey
+    }
+    return null
+  }
   const value = decrypt(r.value)
   if (value == null)
     throw new Error(
@@ -101,7 +108,7 @@ export function recordCheck(provider: ApiProvider, ok: boolean, message: string)
   const res = getDb()
     .prepare('UPDATE secrets SET last_ok = ?, last_message = ?, checked_at = ? WHERE provider = ?')
     .run(ok ? 1 : 0, message, now, provider)
-  if (res.changes === 0 && provider === 'custom') {
+  if (res.changes === 0 && (provider === 'custom' || provider === '9router')) {
     getDb()
       .prepare('INSERT INTO secrets (provider, value, last_ok, last_message, checked_at) VALUES (?, ?, ?, ?, ?)')
       .run(provider, Buffer.alloc(0), ok ? 1 : 0, message, now)
@@ -111,14 +118,20 @@ export function recordCheck(provider: ApiProvider, ok: boolean, message: string)
 export function keyStatuses(): KeyStatus[] {
   const rows = getDb().prepare('SELECT * FROM secrets').all() as SecretRow[]
   const customUrl = getSettings().customBaseUrl.trim()
+  const nineRouterUrl = (getSettings().nineRouterBaseUrl || '').trim()
   return PROVIDERS.map((provider) => {
     const r = rows.find((x) => x.provider === provider)
     const hasKey = !!r && r.value.length > 0
-    const value = hasKey ? decrypt(r!.value) : null
+    const fallbackKey = provider === '9router' ? (process.env.NINEROUTER_KEY || process.env.HERMES_CUSTOM_ROUTER_OPENZ_MY_ID_API_KEY || '') : ''
+    const value = hasKey ? decrypt(r!.value) : (fallbackKey || null)
     const unreadable = hasKey && value == null
+    const isConfigured =
+      provider === 'custom' ? !!customUrl :
+      provider === '9router' ? !!nineRouterUrl :
+      (hasKey || !!fallbackKey)
     return {
       provider,
-      configured: provider === 'custom' ? !!customUrl : hasKey,
+      configured: isConfigured,
       lastOk: unreadable ? false : r?.last_ok == null ? null : r.last_ok === 1,
       lastMessage: unreadable ? 'Kunci tersimpan tapi tidak bisa dibuka lagi. Masukkan ulang kuncinya.' : (r?.last_message ?? null),
       checkedAt: r?.checked_at ?? null,

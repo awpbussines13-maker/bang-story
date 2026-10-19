@@ -110,15 +110,21 @@ export function ModelSection({
             menuClassName="w-[430px]"
             onChange={(id) => onChange({ imageModel: id })}
           />
-          <p className="text-[12.5px] leading-snug text-ink-2">
-            <Cost value={imageCost} hasKey={hasKey}>
-              {(c) => (
-                <>
-                  ≈ {creditLabel(c)} kredit per gambar · {clipCount} gambar ≈ <b className="font-semibold text-ink">{creditLabel(c * clipCount)} kredit</b>
-                </>
-              )}
-            </Cost>
-          </p>
+          {project.imageProvider === '9router' ? (
+            <p className="text-[12.5px] font-semibold text-accent-dark">
+              ✓ Menggunakan 9Router Image (tanpa kredit Higgsfield)
+            </p>
+          ) : (
+            <p className="text-[12.5px] leading-snug text-ink-2">
+              <Cost value={imageCost} hasKey={hasKey}>
+                {(c) => (
+                  <>
+                    ≈ {creditLabel(c)} kredit per gambar · {clipCount} gambar ≈ <b className="font-semibold text-ink">{creditLabel(c * clipCount)} kredit</b>
+                  </>
+                )}
+              </Cost>
+            </p>
+          )}
           <p className="flex items-start gap-1.5 text-[12.5px] leading-snug text-muted">
             <Users className="mt-px size-3.5 shrink-0" />
             {maxRefs(image)

@@ -3,6 +3,7 @@ import { getSecret, PROVIDER_NAMES } from '../secrets'
 import { getSettings, readCache, writeCache } from '../settings'
 import * as eleven from './elevenlabs'
 import * as gemini from './gemini'
+import * as ninerouter from './ninerouter'
 import { readError } from './http'
 import { extractJson } from './json'
 
@@ -35,13 +36,18 @@ function compat(provider: CompatProvider, keyOverride?: string | null, baseOverr
     return { provider, base: 'https://openrouter.ai/api/v1', key, headers: { 'X-OpenRouter-Title': 'Bang Story', 'X-Title': 'Bang Story' } }
   }
   if (provider === 'groq') return { provider, base: 'https://api.groq.com/openai/v1', key, headers: {} }
+  if (provider === '9router') {
+    const base = (baseOverride ?? getSettings().nineRouterBaseUrl).trim().replace(/\/+$/, '')
+    const k = keyOverride !== undefined ? keyOverride : ninerouter.getKey()
+    return { provider, base: base || 'http://127.0.0.1:20128/v1', key: k || null, headers: {} }
+  }
   const base = (baseOverride ?? getSettings().customBaseUrl).trim().replace(/\/+$/, '')
   if (!base) throw new LlmError('Alamat endpoint custom belum diisi. Buka Pengaturan untuk menambahkannya.')
   return { provider, base, key, headers: {} }
 }
 
 function requireKey(c: Compat): void {
-  if (c.provider !== 'custom' && !c.key)
+  if (c.provider !== 'custom' && c.provider !== '9router' && !c.key)
     throw new LlmError(`Kunci API ${PROVIDER_NAMES[c.provider]} belum diatur. Buka Pengaturan untuk menambahkannya.`)
 }
 
@@ -165,13 +171,25 @@ async function fetchModels(source: ModelSource): Promise<ModelOption[]> {
       return openRouterModels()
     case 'groq':
       return groqModels()
+    case '9router':
+      return ninerouter.listModels()
+    case '9router-tts':
+      return ninerouter.listTtsModels()
+    case '9router-image':
+      return [
+        { id: 'ag/gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image', tags: ['Gambar', 'Rekomendasi'] },
+        { id: 'dall-e-3', name: 'DALL-E 3', tags: ['Gambar'] },
+        { id: 'dall-e-2', name: 'DALL-E 2', tags: ['Gambar'] }
+      ]
     case 'custom':
       return customModels()
   }
 }
 
 function cacheKey(source: ModelSource): string {
-  return source === 'custom' ? `models:custom:${getSettings().customBaseUrl.trim()}` : `models:${source}`
+  if (source === 'custom') return `models:custom:${getSettings().customBaseUrl.trim()}`
+  if (source === '9router') return `models:9router:${getSettings().nineRouterBaseUrl.trim()}`
+  return `models:${source}`
 }
 
 export async function listModels(source: ModelSource, refresh = false): Promise<ModelList> {
@@ -187,6 +205,7 @@ export async function listModels(source: ModelSource, refresh = false): Promise<
 
 export async function testLlm(provider: LlmProvider, key?: string | null, baseUrl?: string): Promise<KeyTestResult> {
   if (provider === 'gemini') return gemini.testKey(key ?? undefined)
+  if (provider === '9router') return ninerouter.testConnection(baseUrl, key ?? undefined)
   try {
     const c = compat(provider, key, baseUrl)
     requireKey(c)
@@ -246,7 +265,8 @@ async function chatJson(c: Compat, model: string, system: string, prompt: string
       messages: [
         { role: 'system', content: sys },
         { role: 'user', content: prompt }
-      ]
+      ],
+      stream: false
     }
     if (mode === 'json_schema') body.response_format = { type: 'json_schema', json_schema: { name, strict: true, schema } }
     if (mode === 'json_object') body.response_format = { type: 'json_object' }

@@ -124,7 +124,7 @@ export function IdeaStep() {
 
   if (!project) return null
   const ready = ttsReadiness(keys)
-  const blocked = keys.length ? (['gemini', 'elevenlabs'] as const).filter((p) => !ready[p].ok) : []
+  const blocked = keys.length ? (['gemini', 'elevenlabs', '9router'] as const).filter((p) => !ready[p].ok) : []
   const openSettings = async (): Promise<void> => {
     await flush()
     go({ name: 'settings', back: { name: 'project', id: project.id } })
@@ -257,7 +257,7 @@ export function IdeaStep() {
                 <Segmented
                   value={project.ttsProvider}
                   onChange={(v) => updateProject({ ttsProvider: v, ttsVoice: v === 'gemini' ? 'Charon' : '' })}
-                  options={(['gemini', 'elevenlabs'] as const).map((p) => ({
+                  options={(['gemini', 'elevenlabs', '9router'] as const).map((p) => ({
                     id: p,
                     label: TTS_NAMES[p],
                     disabled: blocked.includes(p),

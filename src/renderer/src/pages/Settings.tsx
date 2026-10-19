@@ -14,6 +14,7 @@ import {
   KeyRound,
   Mic,
   SlidersHorizontal,
+  Server,
   Trash2
 } from 'lucide-react'
 import { HF_IMAGE_MODELS, HF_VIDEO_MODELS } from '@shared/higgsfield'
@@ -25,12 +26,12 @@ import { ProviderLogo, type ProviderLogoId } from '../components/ProviderLogo'
 import { Select } from '../components/Select'
 import { AboutSection } from './AboutSection'
 import { WhisperSection } from './WhisperSection'
-import { Badge, Button, Field, IconButton, confirmDialog, cx, inputCls } from '../components/ui'
+import { Badge, Button, Field, IconButton, Segmented, confirmDialog, cx, inputCls } from '../components/ui'
 import { errorText, relativeTime } from '../lib/format'
 import { useModels } from '../lib/useModels'
 import { useApp } from '../store/app'
 
-type Tab = 'services' | 'general' | 'about'
+type Tab = 'services' | '9router' | 'general' | 'about'
 
 interface ProviderOption<T extends string> {
   id: T
@@ -449,7 +450,7 @@ function TtsSection({ settings, statusOf, onChanged, onSettings }: { settings: A
   const provider = settings.defaultTtsProvider
   const status = statusOf(provider)
   const ready = !!status?.configured && status.lastOk !== false
-  const models = useModels(provider === 'gemini' ? 'gemini-tts' : 'elevenlabs', ready)
+  const models = useModels(provider === 'gemini' ? 'gemini-tts' : provider === '9router' ? '9router-tts' : 'elevenlabs', ready)
   const options: ProviderOption<TtsProvider>[] = [
     {
       id: 'gemini',
@@ -464,9 +465,16 @@ function TtsSection({ settings, statusOf, onChanged, onSettings }: { settings: A
       note: 'Suara sangat natural dengan waktu kata yang presisi untuk caption karaoke.',
       logo: 'elevenlabs',
       status: statusOf('elevenlabs')
+    },
+    {
+      id: '9router',
+      name: '9Router TTS',
+      note: 'Suara narator lewat 9Router (/v1/audio/speech), mendukung Gemini TTS dan OpenAI TTS.',
+      logo: '9router',
+      status: statusOf('9router')
     }
   ]
-  const value = provider === 'gemini' ? settings.geminiTtsModel : settings.elevenModel
+  const value = provider === 'gemini' ? settings.geminiTtsModel : provider === '9router' ? settings.nineRouterTtsModel : settings.elevenModel
   return (
     <>
       <SectionTitle
@@ -478,12 +486,25 @@ function TtsSection({ settings, statusOf, onChanged, onSettings }: { settings: A
       <Card key={provider}>
         <KeyForm
           provider={provider}
-          name={provider === 'gemini' ? 'Google Gemini' : 'ElevenLabs'}
+          name={provider === 'gemini' ? 'Google Gemini' : provider === '9router' ? '9Router' : 'ElevenLabs'}
           status={status}
-          help={provider === 'gemini' ? 'Kunci Gemini dari Google AI Studio.' : 'Kunci API dari akun ElevenLabs.'}
-          hint={provider === 'gemini' && settings.llmProvider === 'gemini' ? 'Kunci ini dipakai bersama dengan penyusun cerita Gemini.' : undefined}
-          link={provider === 'gemini' ? 'https://aistudio.google.com/apikey' : 'https://elevenlabs.io/app/settings/api-keys'}
-          linkLabel={provider === 'gemini' ? 'Buat kunci di Google AI Studio' : 'Buat kunci di ElevenLabs'}
+          help={
+            provider === 'gemini'
+              ? 'Kunci Gemini dari Google AI Studio.'
+              : provider === '9router'
+                ? '9Router TTS menggunakan endpoint /v1/audio/speech pada 9Router kamu.'
+                : 'Kunci API dari akun ElevenLabs.'
+          }
+          hint={
+            provider === 'gemini' && settings.llmProvider === 'gemini'
+              ? 'Kunci ini dipakai bersama dengan penyusun cerita Gemini.'
+              : provider === '9router'
+                ? 'Koneksi dan endpoint diatur di tab menu 9Router.'
+                : undefined
+          }
+          link={provider === 'gemini' ? 'https://aistudio.google.com/apikey' : null}
+          linkLabel={provider === 'gemini' ? 'Buat kunci di Google AI Studio' : ''}
+          customUrl={provider === '9router' ? settings.nineRouterBaseUrl : undefined}
           onChanged={onChanged}
           onSaved={(r) => r.ok && void models.refresh()}
         />
@@ -496,7 +517,17 @@ function TtsSection({ settings, statusOf, onChanged, onSettings }: { settings: A
               loading={models.loading}
               error={models.error}
               fetchedAt={models.fetchedAt}
-              onChange={async (id) => onSettings(await window.api.settings.set(provider === 'gemini' ? { geminiTtsModel: id } : { elevenModel: id }))}
+              onChange={async (id) =>
+                onSettings(
+                  await window.api.settings.set(
+                    provider === 'gemini'
+                      ? { geminiTtsModel: id }
+                      : provider === '9router'
+                        ? { nineRouterTtsModel: id }
+                        : { elevenModel: id }
+                  )
+                )
+              }
               onRefresh={() => void models.refresh()}
             />
           </div>
@@ -506,11 +537,36 @@ function TtsSection({ settings, statusOf, onChanged, onSettings }: { settings: A
   )
 }
 
-function HiggsfieldSection({ status, onChanged }: { status?: KeyStatus; onChanged: () => void }) {
+function HiggsfieldSection({
+  settings,
+  status,
+  onChanged,
+  onSettings
+}: {
+  settings: AppSettings
+  status?: KeyStatus
+  onChanged: () => void
+  onSettings: (s: AppSettings) => void
+}) {
   return (
     <>
       <SectionTitle icon={<ImageIcon className="size-5" />} title="Gambar dan video" sub="Higgsfield membuat gambar klip, lembar karakter, dan video AI." />
       <Card>
+        <div className="flex items-center justify-between border-b border-dashed border-line pb-3">
+          <div className="flex flex-col">
+            <span className="text-sm font-bold">Penyedia Pembuatan Gambar</span>
+            <span className="text-xs text-ink-2">Pilih apakah pembuatan gambar klip memakai Higgsfield atau 9Router</span>
+          </div>
+          <Segmented
+            size="sm"
+            value={settings.imageProvider || 'higgsfield'}
+            onChange={async (v) => onSettings(await window.api.settings.set({ imageProvider: v as any }))}
+            options={[
+              { id: 'higgsfield', label: 'Higgsfield' },
+              { id: '9router', label: '9Router' }
+            ]}
+          />
+        </div>
         <div className="flex items-center gap-3">
           <ProviderLogo id="higgsfield" />
           <div className="flex flex-1 flex-col">
@@ -548,6 +604,298 @@ function HiggsfieldSection({ status, onChanged }: { status?: KeyStatus; onChange
   )
 }
 
+function NineRouterSection({
+  settings,
+  statusOf,
+  onChanged,
+  onSettings
+}: {
+  settings: AppSettings
+  statusOf: (p: ApiProvider) => KeyStatus | undefined
+  onChanged: () => void
+  onSettings: (s: AppSettings) => void
+}) {
+  const { toast } = useApp()
+  const status = statusOf('9router')
+  const configured = !!status?.configured
+  const ready = configured && status?.lastOk !== false
+
+  const [baseUrl, setBaseUrl] = useState(settings.nineRouterBaseUrl || 'http://127.0.0.1:20128/v1')
+  const [apiKey, setApiKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [busy, setBusy] = useState<'save' | 'test' | null>(null)
+
+  const llmModels = useModels('9router', ready)
+  const ttsModels = useModels('9router-tts', ready)
+
+  const save = async (): Promise<void> => {
+    setBusy('save')
+    try {
+      const res = await window.api.settings.setNineRouter(baseUrl, apiKey)
+      toast(res.ok ? 'success' : 'error', res.message)
+      setApiKey('')
+      onChanged()
+      onSettings(await window.api.settings.get())
+    } catch (e) {
+      toast('error', errorText(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const test = async (): Promise<void> => {
+    setBusy('test')
+    try {
+      const res = await window.api.settings.testKey('9router')
+      toast(res.ok ? 'success' : 'error', res.message)
+      onChanged()
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const PRESETS = [
+    { label: 'Lokal VPS', url: 'http://127.0.0.1:20128/v1' },
+    { label: 'OpenZ Cloud', url: 'https://api.openz.my.id/v1' },
+    { label: 'MSI Router', url: 'https://msi.openz.my.id/v1' },
+    { label: 'HuggingFace', url: 'https://yahyathumb-9router.hf.space/v1' }
+  ]
+
+  const isLlmActive = settings.llmProvider === '9router'
+  const isTtsActive = settings.defaultTtsProvider === '9router'
+  const isImageActive = settings.imageProvider === '9router'
+
+  return (
+    <>
+      <SectionTitle
+        icon={<Server className="size-5" />}
+        title="Pengaturan 9Router"
+        sub="Pusatkan AI kamu: satu koneksi 9Router untuk Penyusun Cerita (LLM), Suara Narator (TTS), dan Pembuat Gambar."
+      />
+
+      <Card>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <ProviderLogo id="9router" size={42} />
+            <div className="flex flex-col">
+              <span className="text-base font-bold">9Router Hub</span>
+              <span className="text-[13px] text-ink-2">{baseUrl}</span>
+            </div>
+          </div>
+          <StatusBadge status={status} />
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-dashed border-line pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-ink-2">Preset cepat:</span>
+            {PRESETS.map((p) => (
+              <button
+                key={p.url}
+                type="button"
+                onClick={() => setBaseUrl(p.url)}
+                className={cx(
+                  'rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors',
+                  baseUrl === p.url ? 'border-accent bg-accent-soft text-accent-dark font-bold' : 'border-line hover:bg-sand'
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-end gap-2">
+            <Field label="Alamat Endpoint 9Router (Base URL)" className="flex-1 w-full">
+              <input
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="http://127.0.0.1:20128/v1"
+                spellCheck={false}
+                className={cx(inputCls, 'h-11 font-mono text-sm')}
+              />
+            </Field>
+
+            <Field label="API Key (opsional / terenkripsi)" className="flex-1 w-full">
+              <div className="relative">
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={status?.preview ? `Tersimpan (${status.preview}) · isi untuk ganti` : 'Tempel API key 9router (opsional)'}
+                  className={cx(inputCls, 'h-11 pr-11 font-mono text-sm')}
+                />
+                {apiKey.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowKey(!showKey)}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 flex size-8 items-center justify-center rounded-lg text-muted hover:bg-sand"
+                  >
+                    {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                )}
+              </div>
+            </Field>
+
+            <div className="flex gap-2">
+              <Button variant="accent" className="h-11" loading={busy === 'save'} onClick={() => void save()}>
+                Simpan & Tes
+              </Button>
+              {configured && (
+                <Button className="h-11" loading={busy === 'test'} onClick={() => void test()}>
+                  Tes
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between text-xs text-ink-2">
+            <span>{status?.lastMessage ?? 'Masukkan alamat endpoint 9Router lalu klik Simpan & Tes.'}</span>
+            {ready && (
+              <span className="font-semibold text-accent-dark">
+                ✓ {llmModels.models.length} model terdeteksi di 9Router
+              </span>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      {ready && (
+        <div className="flex flex-col gap-4">
+          <SectionTitle
+            icon={<SlidersHorizontal className="size-5" />}
+            title="Integrasi Layanan 3-in-1"
+            sub="Pilih layanan mana yang ingin diarahkan ke 9Router."
+          />
+
+          {/* 1. Penyusun cerita (LLM) */}
+          <Card>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Cpu className="size-5 text-accent-dark" />
+                <div className="flex flex-col">
+                  <span className="font-bold">Penyusun Cerita (AI LLM)</span>
+                  <span className="text-xs text-ink-2">Menyusun ide, naskah, sinopsis, dan storyboard adegan</span>
+                </div>
+              </div>
+              <Button
+                variant={isLlmActive ? 'primary' : 'secondary'}
+                size="sm"
+                onClick={async () => {
+                  const target = isLlmActive ? 'gemini' : '9router'
+                  onSettings(await window.api.settings.set({ llmProvider: target }))
+                  toast('success', `Penyusun cerita dialihkan ke ${target === '9router' ? '9Router' : 'Google Gemini'}`)
+                }}
+              >
+                {isLlmActive ? 'Sedang Aktif di 9Router' : 'Aktifkan 9Router'}
+              </Button>
+            </div>
+
+            <div className="flex flex-col gap-1.5 border-t border-dashed border-line pt-3">
+              <span className="text-sm font-semibold">Model LLM 9Router</span>
+              <ModelPicker
+                value={settings.llmModels['9router'] || 'ag/gemini-3.8-flash-high'}
+                models={llmModels.models}
+                loading={llmModels.loading}
+                error={llmModels.error}
+                fetchedAt={llmModels.fetchedAt}
+                allowCustom
+                onChange={async (id) => {
+                  onSettings(await window.api.settings.set({ llmModels: { ...settings.llmModels, '9router': id } }))
+                  toast('success', `Model LLM 9Router diubah ke ${id}`)
+                }}
+                onRefresh={() => void llmModels.refresh()}
+              />
+            </div>
+          </Card>
+
+          {/* 2. Suara narator (TTS) */}
+          <Card>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Mic className="size-5 text-accent-dark" />
+                <div className="flex flex-col">
+                  <span className="font-bold">Suara Narator (TTS)</span>
+                  <span className="text-xs text-ink-2">Mengisi suara narator lewat 9Router /v1/audio/speech</span>
+                </div>
+              </div>
+              <Button
+                variant={isTtsActive ? 'primary' : 'secondary'}
+                size="sm"
+                onClick={async () => {
+                  const target = isTtsActive ? 'gemini' : '9router'
+                  onSettings(await window.api.settings.set({ defaultTtsProvider: target }))
+                  toast('success', `Suara narator default dialihkan ke ${target === '9router' ? '9Router TTS' : 'Gemini TTS'}`)
+                }}
+              >
+                {isTtsActive ? 'Sedang Aktif di 9Router' : 'Aktifkan 9Router'}
+              </Button>
+            </div>
+
+            <div className="flex flex-col gap-1.5 border-t border-dashed border-line pt-3">
+              <span className="text-sm font-semibold">Model Suara TTS 9Router</span>
+              <ModelPicker
+                value={settings.nineRouterTtsModel || 'gemini/gemini-3.1-flash-tts-preview'}
+                models={ttsModels.models}
+                loading={ttsModels.loading}
+                error={ttsModels.error}
+                fetchedAt={ttsModels.fetchedAt}
+                allowCustom
+                onChange={async (id) => {
+                  onSettings(await window.api.settings.set({ nineRouterTtsModel: id }))
+                  toast('success', `Model TTS 9Router diubah ke ${id}`)
+                }}
+                onRefresh={() => void ttsModels.refresh()}
+              />
+            </div>
+          </Card>
+
+          {/* 3. Pembuat Gambar (Image Generator) */}
+          <Card>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <ImageIcon className="size-5 text-accent-dark" />
+                <div className="flex flex-col">
+                  <span className="font-bold">Pembuat Gambar & Karakter (Image Generator)</span>
+                  <span className="text-xs text-ink-2">Generate visual klip & lembar karakter langsung lewat 9Router</span>
+                </div>
+              </div>
+              <Button
+                variant={isImageActive ? 'primary' : 'secondary'}
+                size="sm"
+                onClick={async () => {
+                  const target = isImageActive ? 'higgsfield' : '9router'
+                  onSettings(await window.api.settings.set({ imageProvider: target }))
+                  toast('success', `Pembuat gambar dialihkan ke ${target === '9router' ? '9Router' : 'Higgsfield'}`)
+                }}
+              >
+                {isImageActive ? 'Sedang Aktif di 9Router' : 'Aktifkan 9Router'}
+              </Button>
+            </div>
+
+            <div className="flex flex-col gap-2 border-t border-dashed border-line pt-3">
+              <Field label="Model Gambar 9Router">
+                <input
+                  value={settings.nineRouterImageModel || 'ag/gemini-3.1-flash-image'}
+                  onChange={async (e) => {
+                    onSettings(await window.api.settings.set({ nineRouterImageModel: e.target.value }))
+                  }}
+                  placeholder="ag/gemini-3.1-flash-image"
+                  className={cx(inputCls, 'h-10 font-mono text-sm')}
+                />
+              </Field>
+              <p className="text-xs text-ink-2">
+                Contoh: <code className="rounded bg-sand px-1 font-mono text-xs">ag/gemini-3.1-flash-image</code>,{' '}
+                <code className="rounded bg-sand px-1 font-mono text-xs">dall-e-3</code>, atau model image di 9Router kamu.
+              </p>
+            </div>
+          </Card>
+        </div>
+      )}
+    </>
+  )
+}
+
 export function Settings() {
   const { go, route } = useApp()
   const back = route.name === 'settings' && route.back ? route.back : ({ name: 'home' } as const)
@@ -569,6 +917,7 @@ export function Settings() {
 
   const NAV: { id: Tab; label: string; icon: ReactNode }[] = [
     { id: 'services', label: 'Layanan AI dan kunci', icon: <KeyRound className="size-[18px]" /> },
+    { id: '9router', label: '9Router', icon: <Server className="size-[18px]" /> },
     { id: 'general', label: 'Umum', icon: <SlidersHorizontal className="size-[18px]" /> },
     { id: 'about', label: 'Tentang aplikasi', icon: <Info className="size-[18px]" /> }
   ]
@@ -618,9 +967,13 @@ export function Settings() {
                 </div>
                 <LlmSection settings={settings} statusOf={statusOf} onChanged={reload} onSettings={setSettings} />
                 <TtsSection settings={settings} statusOf={statusOf} onChanged={reload} onSettings={setSettings} />
-                <HiggsfieldSection status={statusOf('higgsfield')} onChanged={reload} />
+                <HiggsfieldSection settings={settings} status={statusOf('higgsfield')} onChanged={reload} onSettings={setSettings} />
                 <WhisperSection settings={settings} onSettings={setSettings} />
               </>
+            )}
+
+            {tab === '9router' && settings && (
+              <NineRouterSection settings={settings} statusOf={statusOf} onChanged={reload} onSettings={setSettings} />
             )}
 
             {tab === 'general' && settings && (

@@ -33,6 +33,7 @@ import { probeDurationMs, probeSize } from './services/audio'
 import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
 import * as hf from './services/higgsfield'
+import * as ninerouter from './services/ninerouter'
 import { downloadTo, sleep } from './services/http'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -235,23 +236,81 @@ function updateJobPayload(jobId: string, payload: HfPayload): void {
   getDb().prepare('UPDATE jobs SET payload_json = ? WHERE id = ?').run(JSON.stringify(payload), jobId)
 }
 
+function startNineRouterImage(job: Job, build: (ctx: TaskCtx) => Promise<{ prompt: string }>): Job {
+  emit.job(job)
+  return runJob(job, 'higgsfield', async (ctx) => {
+    ctx.progress(0.1, 'Menyiapkan prompt gambar')
+    const { prompt } = await build(ctx)
+    ctx.progress(0.2, 'Mengirim ke 9Router Image Generator')
+    const s = getSettings()
+    const model = s.nineRouterImageModel || 'ag/gemini-3.1-flash-image'
+    const project = getProject(job.projectId)
+    const size = project.aspectRatio === '9:16' ? '1024x1792' : '1792x1024'
+    const { bytes, contentType } = await ninerouter.generateImage(prompt, model, size, ctx.signal)
+    ctx.progress(0.85, 'Menyimpan gambar hasil')
+    const ext = contentType.includes('png') ? '.png' : contentType.includes('jpeg') || contentType.includes('jpg') ? '.jpg' : '.webp'
+    const rel = saveFile(job.projectId, 'images', ext, bytes)
+    const abs = assetAbsPath(job.projectId, rel)
+    const sizeProbe = await probeSize(abs)
+    const asset = insertAsset({
+      projectId: job.projectId,
+      clipId: job.clipId,
+      characterId: job.characterId,
+      kind: 'image',
+      provider: '9router',
+      model,
+      prompt,
+      localPath: rel,
+      width: sizeProbe?.width ?? null,
+      height: sizeProbe?.height ?? null
+    })
+    emit.asset(asset)
+    if (job.characterId) {
+      setCharacterSheet(job.characterId, asset.id)
+      emit.character({ characterId: job.characterId, patch: { sheetAssetId: asset.id } })
+    } else if (job.clipId) {
+      patchClip(job.clipId, { imageAssetId: asset.id })
+      emit.clip({ clipId: job.clipId, patch: { imageAssetId: asset.id } })
+      const first = clipsOf(job.projectId)[0]
+      if (!project.coverAssetId || first?.id === job.clipId) touchProject(job.projectId, { coverAssetId: asset.id })
+    }
+    touchProject(job.projectId)
+    ctx.progress(1, 'Selesai')
+    return asset.id
+  })
+}
+
 // ---------- public entry points ----------
 
 export function generateClipImage(clipId: string): Job {
   const existing = activeJobFor({ clipId }, 'image')
   if (existing) return existing
   const clip = getClip(clipId)
-  const job = insertJob({ projectId: clip.projectId, clipId, kind: 'image', provider: 'higgsfield' })
+  const project = getProject(clip.projectId)
+  const s = getSettings()
+  const useNineRouter = project.imageProvider === '9router' || s.imageProvider === '9router'
+  const job = insertJob({ projectId: clip.projectId, clipId, kind: 'image', provider: useNineRouter ? '9router' : 'higgsfield' })
+  if (useNineRouter) {
+    return startNineRouterImage(job, async (ctx) => {
+      const fresh = getClip(clipId)
+      const proj = getProject(fresh.projectId)
+      const chars = charactersOf(proj.id).filter((c) => fresh.characterIds.includes(c.id))
+      const model = getImageModel(proj.imageModel)
+      const refs = await referenceUrls(model, chars, ctx.signal).catch(() => ({ names: [], urls: [] }))
+      const prompt = clipPrompt(proj, fresh, chars, refs.names, 1000)
+      return { prompt }
+    })
+  }
   return startHiggsfield(job, async (ctx) => {
     const fresh = getClip(clipId)
-    const project = getProject(fresh.projectId)
-    const model = getImageModel(project.imageModel)
-    const chars = charactersOf(project.id).filter((c) => fresh.characterIds.includes(c.id))
+    const proj = getProject(fresh.projectId)
+    const model = getImageModel(proj.imageModel)
+    const chars = charactersOf(proj.id).filter((c) => fresh.characterIds.includes(c.id))
     const refs = await referenceUrls(model, chars, ctx.signal)
-    const prompt = clipPrompt(project, fresh, chars, refs.names, promptLimit(model))
+    const prompt = clipPrompt(proj, fresh, chars, refs.names, promptLimit(model))
     return {
       endpoint: model.id,
-      body: imageBody(model, prompt, project.aspectRatio, refs.urls),
+      body: imageBody(model, prompt, proj.aspectRatio, refs.urls),
       payload: { target: 'clip-image', model: model.id, prompt }
     }
   })
@@ -261,11 +320,21 @@ export function generateCharacterSheet(characterId: string): Job {
   const existing = activeJobFor({ characterId }, 'sheet')
   if (existing) return existing
   const c = getCharacter(characterId)
-  const job = insertJob({ projectId: c.projectId, characterId, kind: 'sheet', provider: 'higgsfield' })
+  const project = getProject(c.projectId)
+  const s = getSettings()
+  const useNineRouter = project.imageProvider === '9router' || s.imageProvider === '9router'
+  const job = insertJob({ projectId: c.projectId, characterId, kind: 'sheet', provider: useNineRouter ? '9router' : 'higgsfield' })
+  if (useNineRouter) {
+    return startNineRouterImage(job, async () => {
+      const proj = getProject(c.projectId)
+      const prompt = sheetPrompt(proj, getCharacter(characterId))
+      return { prompt }
+    })
+  }
   return startHiggsfield(job, async () => {
-    const project = getProject(c.projectId)
-    const model = getImageModel(project.imageModel)
-    const prompt = sheetPrompt(project, getCharacter(characterId))
+    const proj = getProject(c.projectId)
+    const model = getImageModel(proj.imageModel)
+    const prompt = sheetPrompt(proj, getCharacter(characterId))
     return {
       endpoint: model.id,
       body: imageBody(model, prompt, '16:9', []),
@@ -317,12 +386,15 @@ export function generateClipTts(clipId: string): Job {
     let rel: string
     let words: WordTiming[] | undefined
     let estimated = false
-    const voice = p.ttsVoice || (p.ttsProvider === 'gemini' ? 'Charon' : '')
+    const voice = p.ttsVoice || (p.ttsProvider === 'gemini' ? 'Charon' : p.ttsProvider === '9router' ? (getSettings().nineRouterTtsModel || 'gemini/gemini-3.1-flash-tts-preview') : '')
     if (p.ttsProvider === 'elevenlabs') {
       if (!voice) throw new Error('Pilih suara ElevenLabs dulu di langkah Ide cerita.')
       const out = await eleven.speak(text, voice, p.language, ctx.signal)
       rel = saveFile(p.id, 'audio', '.mp3', out.audio)
       words = out.words
+    } else if (p.ttsProvider === '9router') {
+      const audio = await ninerouter.speak(text, voice, p.language, ctx.signal)
+      rel = saveFile(p.id, 'audio', '.wav', audio)
     } else {
       const wav = await gemini.speak(text, voice, p.language, ctx.signal)
       rel = saveFile(p.id, 'audio', '.wav', wav)
@@ -338,7 +410,7 @@ export function generateClipTts(clipId: string): Job {
       clipId,
       kind: 'audio',
       provider: p.ttsProvider,
-      model: p.ttsProvider === 'gemini' ? getSettings().geminiTtsModel : getSettings().elevenModel,
+      model: p.ttsProvider === 'gemini' ? getSettings().geminiTtsModel : p.ttsProvider === '9router' ? (getSettings().nineRouterTtsModel || voice) : getSettings().elevenModel,
       prompt: text,
       localPath: rel,
       durationMs: audioMs,

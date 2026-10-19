@@ -7,13 +7,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultLanguage: 'id',
   exportFolder: null,
   llmProvider: 'gemini',
-  llmModels: { gemini: 'gemini-3.8-flash', openrouter: '', groq: '', custom: '' },
+  llmModels: { gemini: 'gemini-3.8-flash', openrouter: '', groq: '', custom: '', '9router': 'ag/gemini-3.8-flash-high' },
   customBaseUrl: '',
   geminiTtsModel: 'gemini-3.8-flash-tts',
   elevenModel: 'eleven_multilingual_v2',
   imageModel: DEFAULT_IMAGE_MODEL,
   videoModel: DEFAULT_VIDEO_MODEL,
-  whisperAuto: true
+  whisperAuto: true,
+  nineRouterBaseUrl: 'http://127.0.0.1:20128/v1',
+  nineRouterTtsModel: 'gemini/gemini-3.1-flash-tts-preview',
+  nineRouterImageModel: 'ag/gemini-3.1-flash-image',
+  imageProvider: 'higgsfield'
 }
 
 export function getSettings(): AppSettings {

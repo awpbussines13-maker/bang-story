@@ -25,6 +25,7 @@ import type {
   AspectRatio,
   ExportOptions,
   KeyTestResult,
+  LlmProvider,
   ModelSource,
   NewProjectInput,
   ProjectSnapshot,
@@ -70,6 +71,7 @@ import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
 import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
+import * as ninerouter from './services/ninerouter'
 import { generateScript, generateVisuals, generateMusicPrompt } from './story'
 
 type Handler = (...args: any[]) => unknown
@@ -99,7 +101,8 @@ export async function dispatch(channel: string, args: any[] = []): Promise<unkno
 async function testProvider(provider: ApiProvider, key?: string): Promise<KeyTestResult> {
   if (provider === 'higgsfield') return hf.testCredentials(key)
   if (provider === 'elevenlabs') return eleven.testKey(key)
-  return llm.testLlm(provider, key)
+  if (provider === '9router') return ninerouter.testConnection(undefined, key)
+  return llm.testLlm(provider as LlmProvider, key)
 }
 
 function defaultExportFolder(): string {
@@ -240,11 +243,23 @@ export function registerIpc(): void {
     recordCheck('custom', result.ok, result.message)
     return result
   })
+  handle('settings:setNineRouter', async (baseUrl: string, key: string) => {
+    const url = baseUrl.trim().replace(/\/+$/, '')
+    if (!/^https?:\/\/[^\s]+$/i.test(url)) throw new Error('Alamat endpoint harus diawali http:// atau https://')
+    setSettings({ nineRouterBaseUrl: url })
+    if (key.trim()) setSecret('9router', key.trim())
+    dropCache('models:9router')
+    dropCache('models:9router-tts')
+    const result = await ninerouter.testConnection(url, key.trim() || undefined)
+    recordCheck('9router', result.ok, result.message)
+    return result
+  })
   handle('settings:clearKey', (provider: ApiProvider) => {
     clearSecret(provider)
     dropCache(`models:${provider}`)
     if (provider === 'higgsfield') forgetEstimates()
     if (provider === 'custom') setSettings({ customBaseUrl: '' })
+    if (provider === '9router') setSettings({ nineRouterBaseUrl: 'http://127.0.0.1:20128/v1' })
   })
   handle('models:list', (source: ModelSource, refresh?: boolean) => llm.listModels(source, !!refresh))
   handle('settings:testKey', async (provider: ApiProvider) => {
@@ -255,6 +270,7 @@ export function registerIpc(): void {
   handle('settings:revealKey', (provider: ApiProvider) => revealSecret(provider))
   handle('settings:voices', async (provider: TtsProvider): Promise<VoiceOption[]> => {
     if (provider === 'gemini') return gemini.listVoices()
+    if (provider === '9router') return ninerouter.listVoices()
     return eleven.listVoices()
   })
 

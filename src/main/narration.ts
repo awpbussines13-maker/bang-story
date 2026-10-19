@@ -27,6 +27,7 @@ import { chooseCuts, cutsFromWords } from './cuts'
 import { probeDurationMs } from './services/audio'
 import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
+import * as ninerouter from './services/ninerouter'
 import { timeScript, whisperReady } from './whisper'
 
 /**
@@ -168,6 +169,60 @@ async function geminiTake(p: Project, voice: string, group: Clip[], tmp: string,
   return out
 }
 
+async function nineRouterTake(p: Project, voice: string, group: Clip[], tmp: string, ctx: TaskCtx, note: () => void): Promise<Segment[]> {
+  const wav = await ninerouter.speak(group.map((c) => c.narration.trim()).join('\n<long pause>\n'), voice, p.language, ctx.signal)
+  const take = join(tmp, `take-${randomUUID()}.wav`)
+  writeFileSync(take, wav)
+  const total = (await probeDurationMs(take)) / 1000
+  const silences = await detectSilences(take, ctx.signal)
+
+  const perScene = group.map((c) => spokenWords(c.narration))
+  const timed = await whisperTimes(take, perScene.flat(), p, total, tmp, ctx, note)
+  const ranges: WordTiming[][] = []
+  let gaps: { end: number; start: number }[] | null = null
+  if (timed) {
+    let at = 0
+    for (const w of perScene) {
+      ranges.push(timed.slice(at, at + w.length))
+      at += w.length
+    }
+    gaps = []
+    for (let k = 0; k < group.length - 1; k++) {
+      const end = ranges[k][ranges[k].length - 1]?.end
+      const start = ranges[k + 1][0]?.start
+      if (end == null || start == null) {
+        gaps = null
+        break
+      }
+      gaps.push({ end, start })
+    }
+  }
+  const cuts = gaps ? cutsFromWords(gaps, silences) : chooseCuts(total, group.map((c) => stripVoiceTags(c.narration).length), silences)
+  const bounds = [0, ...cuts, total]
+  const out: Segment[] = []
+  for (let k = 0; k < group.length; k++) {
+    const start = bounds[k]
+    const end = bounds[k + 1]
+    const len = end - start
+    const file = join(tmp, `seg-${randomUUID()}.wav`)
+    await cut(take, start, end, file, ctx.signal)
+    let words: WordTiming[]
+    if (timed) {
+      words = ranges[k].map((w) => ({ ...w, start: Math.min(len, Math.max(0, w.start - start)), end: Math.min(len, Math.max(0, w.end - start)) }))
+    } else {
+      const lead = silences.find((s) => s.start <= start + 0.01 && s.end > start)?.end ?? start
+      const tail = silences.find((s) => s.start < end && s.end >= end - 0.01)?.start ?? end
+      words = estimateWordTimings(stripVoiceTags(group[k].narration), Math.max(0.3, tail - lead)).map((w) => ({
+        ...w,
+        start: w.start + (lead - start),
+        end: w.end + (lead - start)
+      }))
+    }
+    out.push({ clip: group[k], file, durationMs: Math.round(len * 1000), words, estimated: !timed, timedBy: timed ? WHISPER_TIMING : undefined })
+  }
+  return out
+}
+
 async function elevenTake(
   p: Project,
   voice: string,
@@ -222,7 +277,7 @@ function store(p: Project, s: Segment, voice: string, takeId: string, bytes: Buf
     clipId: s.clip.id,
     kind: 'audio',
     provider: p.ttsProvider,
-    model: p.ttsProvider === 'gemini' ? getSettings().geminiTtsModel : getSettings().elevenModel,
+    model: p.ttsProvider === 'gemini' ? getSettings().geminiTtsModel : p.ttsProvider === '9router' ? (getSettings().nineRouterTtsModel || voice) : getSettings().elevenModel,
     prompt: s.clip.narration,
     localPath: rel,
     durationMs: s.durationMs,
@@ -248,7 +303,7 @@ export function generateNarration(projectId: string, mode: 'missing' | 'all'): J
   emit.job(job)
   return runJob(job, 'tts', async (ctx) => {
     const p = getProject(projectId)
-    const voice = p.ttsVoice || (p.ttsProvider === 'gemini' ? 'Charon' : '')
+    const voice = p.ttsVoice || (p.ttsProvider === 'gemini' ? 'Charon' : p.ttsProvider === '9router' ? (getSettings().nineRouterTtsModel || 'gemini/gemini-3.1-flash-tts-preview') : '')
     if (p.ttsProvider === 'elevenlabs' && !voice) throw new Error('Pilih suara ElevenLabs dulu di langkah Ide cerita.')
     const clips = targets.map((c) => getClip(c.id)).filter((c) => c.narration.trim())
     const groups = parts(clips, p.ttsProvider)
@@ -270,9 +325,13 @@ export function generateNarration(projectId: string, mode: 'missing' | 'all'): J
                 tmp,
                 ctx
               )
-            : await geminiTake(p, voice, group, tmp, ctx, () =>
-                ctx.progress(0.05 + 0.85 * ((done + group.length * 0.6) / clips.length), 'Menyinkronkan caption dengan Whisper')
-              )
+            : p.ttsProvider === '9router'
+              ? await nineRouterTake(p, voice, group, tmp, ctx, () =>
+                  ctx.progress(0.05 + 0.85 * ((done + group.length * 0.6) / clips.length), 'Menyinkronkan caption dengan Whisper')
+                )
+              : await geminiTake(p, voice, group, tmp, ctx, () =>
+                  ctx.progress(0.05 + 0.85 * ((done + group.length * 0.6) / clips.length), 'Menyinkronkan caption dengan Whisper')
+                )
         ctx.progress(0.05 + 0.85 * ((done + group.length * 0.9) / clips.length), 'Memotong suara per adegan')
         for (const s of segments) store(p, s, voice, takeId, readFileSync(s.file))
         done += group.length

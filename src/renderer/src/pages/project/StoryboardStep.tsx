@@ -123,7 +123,9 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
   const voiceName =
     project.ttsProvider === 'gemini'
       ? `${geminiVoiceName(project.ttsVoice)} · ${geminiVoiceTone(project.ttsVoice) ?? 'Gemini'}`
-      : 'ElevenLabs'
+      : project.ttsProvider === '9router'
+        ? `9Router · ${project.ttsVoice || 'Gemini TTS'}`
+        : 'ElevenLabs'
 
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
