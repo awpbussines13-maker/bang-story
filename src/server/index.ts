@@ -5,10 +5,11 @@ import { Readable } from 'node:stream'
 import { randomUUID } from 'node:crypto'
 import { getDb } from '../main/db'
 import { dispatch, registerIpc } from '../main/ipc'
-import { eventBus } from '../main/events'
+import { eventBus, emit } from '../main/events'
 import { assetAbsPath, fontsDir, projectsRoot } from '../main/paths'
-import { getProject, insertAsset } from '../main/repo'
+import { getProject, insertAsset, patchClip } from '../main/repo'
 import { probeDurationMs, probeSize } from '../main/services/audio'
+import { buildFlowZip } from '../main/flowExport'
 
 process.env.WEB_MODE = '1'
 
@@ -227,7 +228,7 @@ const server = createServer(async (req, res) => {
 
       const originalName = file.name || 'uploaded_file'
       const ext = extname(originalName).toLowerCase()
-      const folder = kind === 'music' ? 'music' : 'overlays'
+      const folder = kind === 'music' ? 'music' : kind === 'video' ? 'videos' : 'overlays'
       const rel = `${folder}/${randomUUID()}${ext}`
       const abs = assetAbsPath(projectId, rel)
 
@@ -246,6 +247,29 @@ const server = createServer(async (req, res) => {
           localPath: rel,
           durationMs
         })
+      } else if (kind === 'video') {
+        const durationMs = await probeDurationMs(abs).catch(() => null)
+        const size = await probeSize(abs).catch(() => null)
+        const clipId = url.searchParams.get('clipId') || null
+        asset = insertAsset({
+          projectId,
+          clipId,
+          kind: 'video',
+          provider: 'local',
+          prompt: originalName,
+          localPath: rel,
+          durationMs,
+          width: size?.width,
+          height: size?.height
+        })
+        if (clipId) {
+          patchClip(clipId, {
+            videoAssetId: asset.id,
+            motionType: 'video',
+            mediaInMs: 0
+          })
+          emit.clip({ clipId, patch: { videoAssetId: asset.id, motionType: 'video', mediaInMs: 0 } })
+        }
       } else {
         const size = await probeSize(abs).catch(() => null)
         if (!size) throw new Error('Gambar tidak bisa dibaca. Pakai PNG, JPG, atau WebP.')
@@ -275,10 +299,39 @@ const server = createServer(async (req, res) => {
     if (!rawPath || !existsSync(rawPath)) {
       res.writeHead(404, { 'Content-Type': 'text/plain' })
       res.end('File not found')
-      return
+    } else {
+      res.setHeader('Content-Disposition', `attachment; filename="${basename(rawPath)}"`)
+      sendFileWithRange(req, res, rawPath)
     }
-    res.setHeader('Content-Disposition', `attachment; filename="${basename(rawPath)}"`)
-    sendFileWithRange(req, res, rawPath)
+    return
+  }
+
+  // 6b. Google Flow automation export package (/api/export-flow?projectId=...)
+  if ((req.method === 'GET' || req.method === 'HEAD') && pathname === '/api/export-flow') {
+    try {
+      const projectId = url.searchParams.get('projectId')
+      if (!projectId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Missing projectId' }))
+        return
+      }
+
+      const { zipBuffer, fileName } = buildFlowZip(projectId)
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(fileName)}"`,
+        'Content-Length': String(zipBuffer.length),
+        'Cache-Control': 'no-cache'
+      })
+      if (req.method === 'HEAD') {
+        res.end()
+        return
+      }
+      res.end(zipBuffer)
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: (err as Error)?.message ?? String(err) }))
+    }
     return
   }
 

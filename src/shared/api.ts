@@ -9,6 +9,7 @@ import type {
   WhisperStatus,
   WordTiming,
   ExportOptions,
+  FlowExportSummary,
   Job,
   KeyStatus,
   KeyTestResult,
@@ -71,6 +72,8 @@ export interface StudioApi {
     pickMusic(projectId: string): Promise<Asset | null>
     /** A logo or watermark image for an overlay. */
     pickImage(projectId: string): Promise<Asset | null>
+    /** A custom or externally generated video for a clip. */
+    pickVideo(projectId: string, clipId?: string): Promise<Asset | null>
   }
   settings: {
     get(): Promise<AppSettings>
@@ -96,6 +99,7 @@ export interface StudioApi {
     defaultFolder(): Promise<string>
     pickFolder(): Promise<string | null>
     reveal(path: string): Promise<void>
+    flowData(projectId: string): Promise<FlowExportSummary>
   }
   app: {
     openExternal(url: string): Promise<void>

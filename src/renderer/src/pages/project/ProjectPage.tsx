@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Download } from 'lucide-react'
+import { Download, Sparkles } from 'lucide-react'
 import { needsVisual } from '@shared/script'
 import type { Step } from '@shared/types'
 import { Button, Spinner } from '../../components/ui'
@@ -8,6 +8,7 @@ import { useApp } from '../../store/app'
 import { useProject } from '../../store/project'
 import { EditorStep } from './EditorStep'
 import { ExportDialog } from './ExportDialog'
+import { FlowExportDialog } from './FlowExportDialog'
 import { IdeaStep } from './IdeaStep'
 import { ProjectHeader } from './ProjectHeader'
 import { ScriptStep } from './ScriptStep'
@@ -17,6 +18,7 @@ export function ProjectPage({ id }: { id: string }) {
   const { load, unload, loaded, project, clips } = useProject()
   const { toast, go } = useApp()
   const [exportOpen, setExportOpen] = useState(false)
+  const [flowExportOpen, setFlowExportOpen] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -62,11 +64,23 @@ export function ProjectPage({ id }: { id: string }) {
       <ProjectHeader
         doneSteps={done}
         right={
-          project.step === 4 ? (
-            <Button variant="primary" icon={<Download className="size-[18px]" />} onClick={() => setExportOpen(true)}>
-              Ekspor video
-            </Button>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {clips.length > 0 && clips.some((c) => c.imageAssetId) && (
+              <Button
+                variant="secondary"
+                icon={<Sparkles className="size-4 text-accent" />}
+                onClick={() => setFlowExportOpen(true)}
+                title="Ekspor gambar & prompt ke Google Flow Automation"
+              >
+                <span className="hidden sm:inline">Google Flow</span>
+              </Button>
+            )}
+            {project.step === 4 && (
+              <Button variant="primary" icon={<Download className="size-[18px]" />} onClick={() => setExportOpen(true)}>
+                Ekspor video
+              </Button>
+            )}
+          </div>
         }
       />
       <div className="min-h-0 flex-1">
@@ -76,6 +90,7 @@ export function ProjectPage({ id }: { id: string }) {
         {project.step === 4 && <EditorStep />}
       </div>
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+      <FlowExportDialog open={flowExportOpen} onClose={() => setFlowExportOpen(false)} />
     </div>
   )
 }

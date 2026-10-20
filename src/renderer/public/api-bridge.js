@@ -54,7 +54,7 @@
     return data.result
   }
 
-  function pickAndUpload(projectId, kind, accept) {
+  function pickAndUpload(projectId, kind, accept, clipId) {
     return new Promise((resolve, reject) => {
       const input = document.createElement('input')
       input.type = 'file'
@@ -71,7 +71,9 @@
           }
           const formData = new FormData()
           formData.append('file', file)
-          const res = await fetch(`/api/upload?projectId=${encodeURIComponent(projectId)}&kind=${encodeURIComponent(kind)}`, {
+          const qs = new URLSearchParams({ projectId, kind })
+          if (clipId) qs.set('clipId', clipId)
+          const res = await fetch(`/api/upload?${qs.toString()}`, {
             method: 'POST',
             body: formData
           })
@@ -115,6 +117,7 @@
           return {
             pickMusic: (projectId) => pickAndUpload(projectId, 'music', 'audio/*'),
             pickImage: (projectId) => pickAndUpload(projectId, 'overlay', 'image/*'),
+            pickVideo: (projectId, clipId) => pickAndUpload(projectId, 'video', 'video/mp4,video/webm,video/quicktime', clipId),
             setActive: (clipId, assetId) => rpc('assets:setActive', clipId, assetId),
             setWords: (assetId, words) => rpc('assets:setWords', assetId, words)
           }
@@ -125,6 +128,7 @@
             start: (projectId, opts) => rpc('export:start', projectId, opts),
             defaultFolder: () => Promise.resolve('exports'),
             pickFolder: () => Promise.resolve('exports'),
+            flowData: (projectId) => rpc('export:flowData', projectId),
             reveal: (path) => {
               const a = document.createElement('a')
               a.href = `/api/download?path=${encodeURIComponent(path)}`

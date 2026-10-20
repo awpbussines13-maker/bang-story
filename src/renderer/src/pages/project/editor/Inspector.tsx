@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AudioLines, Check, Clapperboard, Copy, ExternalLink, Film, Layers, Mic, Move, Music, Play, Sparkles, Type, Volume2, X } from 'lucide-react'
+import { AudioLines, Check, Clapperboard, Copy, ExternalLink, Film, Layers, Mic, Move, Music, Play, Sparkles, Type, Upload, Volume2, X } from 'lucide-react'
 import {
   CAPTION_FONTS,
   CAPTION_POSITIONS,
@@ -62,7 +62,7 @@ const VIDEO_CAMERA_OPTIONS = [
 ]
 
 function ClipTab({ clip, index }: { clip: Clip; index: number }) {
-  const { assets, jobs, updateClip, flush } = useProject()
+  const { project, assets, jobs, updateClip, flush } = useProject()
   const { toast } = useApp()
   const image = clip.imageAssetId ? assets[clip.imageAssetId] : null
   const video = clip.videoAssetId ? assets[clip.videoAssetId] : null
@@ -78,6 +78,16 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
     try {
       await flush()
       await fn()
+    } catch (e) {
+      toast('error', errorText(e))
+    }
+  }
+
+  const uploadVideo = async (): Promise<void> => {
+    if (!project) return
+    try {
+      const a = await window.api.assets.pickVideo(project.id, clip.id)
+      if (a) toast('success', 'Video berhasil diunggah ke klip.')
     } catch (e) {
       toast('error', errorText(e))
     }
@@ -103,6 +113,9 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
               onClick={() => void run(() => window.api.generate.clipVideo(clip.id))}
             >
               {video ? 'Buat ulang video' : 'Buat video'}
+            </Button>
+            <Button size="sm" variant="secondary" icon={<Upload className="size-4" />} onClick={() => void uploadVideo()}>
+              Unggah video
             </Button>
             <Button size="sm" icon={<Move className="size-4" />} onClick={() => updateClip(clip.id, { motionType: 'camera' })}>
               Kembali ke gerak kamera
@@ -172,6 +185,9 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
               }}
             >
               Jadikan video AI
+            </Button>
+            <Button size="sm" icon={<Upload className="size-4" />} onClick={() => void uploadVideo()}>
+              Unggah video
             </Button>
           </div>
           <p className="text-xs leading-relaxed text-muted">Ganti gerakan atau kekuatannya untuk langsung melihatnya di pratinjau.</p>

@@ -49,7 +49,8 @@ const api: StudioApi = {
     setActive: call('assets:setActive'),
     setWords: call('assets:setWords'),
     pickMusic: call('assets:pickMusic'),
-    pickImage: call('assets:pickImage')
+    pickImage: call('assets:pickImage'),
+    pickVideo: call('assets:pickVideo')
   },
   settings: {
     get: call('settings:get'),
@@ -70,7 +71,8 @@ const api: StudioApi = {
     start: call('export:start'),
     defaultFolder: call('export:defaultFolder'),
     pickFolder: call('export:pickFolder'),
-    reveal: call('export:reveal')
+    reveal: call('export:reveal'),
+    flowData: call('export:flowData')
   },
   app: {
     openExternal: call('app:openExternal'),

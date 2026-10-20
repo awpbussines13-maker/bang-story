@@ -34,6 +34,7 @@ import type {
   WordTiming
 } from '@shared/types'
 import { startExport } from './exporter'
+import { generateFlowData } from './flowExport'
 import {
   estimateCredits,
   forgetEstimates,
@@ -62,6 +63,7 @@ import {
   listProjects,
   removeProject,
   saveSnapshot,
+  patchClip,
   updateAssetMeta
 } from './repo'
 import { clearSecret, keyStatuses, recordCheck, revealSecret, setSecret } from './secrets'
@@ -219,6 +221,41 @@ export function registerIpc(): void {
     })
   })
 
+  handle('assets:pickVideo', async (projectId: string, clipId?: string) => {
+    const win = electronBW?.getFocusedWindow?.()
+    if (!electronDialog?.showOpenDialog) return null
+    const res = await electronDialog.showOpenDialog(win!, {
+      title: 'Pilih file video klip',
+      filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'webm', 'mkv'] }],
+      properties: ['openFile']
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    getProject(projectId)
+    const src = res.filePaths[0]
+    const rel = `videos/${randomUUID()}${extname(src).toLowerCase()}`
+    const abs = assetAbsPath(projectId, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    copyFileSync(src, abs)
+    const durationMs = await probeDurationMs(abs).catch(() => null)
+    const size = await probeSize(abs).catch(() => null)
+    const asset = insertAsset({
+      projectId,
+      clipId: clipId || null,
+      kind: 'video',
+      provider: 'local',
+      prompt: basename(src),
+      localPath: rel,
+      durationMs,
+      width: size?.width,
+      height: size?.height
+    })
+    if (clipId) {
+      patchClip(clipId, { videoAssetId: asset.id, motionType: 'video', mediaInMs: 0 })
+      emit.clip({ clipId, patch: { videoAssetId: asset.id, motionType: 'video', mediaInMs: 0 } })
+    }
+    return asset
+  })
+
   handle('settings:get', () => getSettings())
   handle('settings:set', (patch: Partial<AppSettings>) => setSettings(patch))
   handle('settings:keys', () => keyStatuses())
@@ -291,6 +328,7 @@ export function registerIpc(): void {
   handle('export:reveal', (path: string) => {
     if (electronShell?.showItemInFolder) electronShell.showItemInFolder(path)
   })
+  handle('export:flowData', (projectId: string) => generateFlowData(projectId))
 
   handle('app:version', () => electronApp?.getVersion?.() ?? '1.0.0-web')
   handle('app:copyText', (text: string) => {

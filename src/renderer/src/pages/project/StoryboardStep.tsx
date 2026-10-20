@@ -32,6 +32,7 @@ import { useNarration } from '../../lib/useNarration'
 import { useApp } from '../../store/app'
 import { isRunning, jobFor, useProject } from '../../store/project'
 import { CharacterModal } from './CharacterModal'
+import { FlowExportDialog } from './FlowExportDialog'
 
 function useAudio(): { play: (url: string) => void; stop: () => void; playing: string | null } {
   const ref = useRef<HTMLAudioElement | null>(null)
@@ -452,6 +453,7 @@ export function StoryboardStep() {
   const { toast } = useApp()
   /** A character id, "new" for an unsaved one, or null. */
   const [openChar, setOpenChar] = useState<string | null>(null)
+  const [flowExportOpen, setFlowExportOpen] = useState(false)
   const [credits, setCredits] = useState<number | null>(null)
   const [videoCredits, setVideoCredits] = useState<number | null>(null)
   const [planning, setPlanning] = useState(false)
@@ -624,6 +626,14 @@ export function StoryboardStep() {
             <span className="font-normal text-ink-2">≈ {Math.round(credits * stats.needImg * 10) / 10} kr</span>
           )}
         </Button>
+        <Button
+          variant="secondary"
+          icon={<Sparkles className="size-4 text-accent" />}
+          onClick={() => setFlowExportOpen(true)}
+          title="Ekspor gambar dan arahan gerak video untuk dieksekusi secara bulk di Google Flow (Veo)"
+        >
+          Ekspor Google Flow
+        </Button>
         {readyForVideo && (
           <Button
             variant="primary"
@@ -748,6 +758,7 @@ export function StoryboardStep() {
         </Button>
       </footer>
       <CharacterModal characterId={openChar} onClose={() => setOpenChar(null)} onCreated={(id) => setOpenChar(id)} />
+      <FlowExportDialog open={flowExportOpen} onClose={() => setFlowExportOpen(false)} />
     </div>
   )
 }

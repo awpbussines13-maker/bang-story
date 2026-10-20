@@ -352,6 +352,32 @@ export interface ExportOptions {
   folder: string
 }
 
+export interface FlowExportItem {
+  index: number
+  clipId: string
+  title: string
+  imageFilename: string
+  imageUrl: string | null
+  hasImage: boolean
+  videoPrompt: string
+  durationSec: number
+  aspectRatio: AspectRatio
+}
+
+export interface FlowExportSummary {
+  projectId: string
+  title: string
+  aspectRatio: AspectRatio
+  totalClips: number
+  readyClips: number
+  items: FlowExportItem[]
+  promptsTxt: string
+  promptsWithRefTxt: string
+  csvText: string
+  tsvText: string
+  jsonText: string
+}
+
 export interface ClipPatchEvent {
   clipId: string
   patch: Partial<Clip>
