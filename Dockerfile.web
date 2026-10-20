@@ -27,12 +27,19 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/out ./out
 COPY --from=builder /app/resources ./resources
+
+# Register the bundled caption fonts so libass can resolve them (and fall back
+# to Noto Naskh Arabic for Arabic/Hebrew scripts instead of drawing tofu boxes).
+RUN mkdir -p /usr/share/fonts/truetype/bang-story \
+    && cp /app/resources/fonts/*.ttf /usr/share/fonts/truetype/bang-story/ \
+    && fc-cache -f
 
 EXPOSE 3000
 

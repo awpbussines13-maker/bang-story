@@ -99,6 +99,12 @@ const BOLD = 'Tegas & modern'
 const CARTOON = 'Kartun & komik'
 const OTHER = 'Tulisan tangan & elegan'
 
+/**
+ * Face libass falls back to for scripts the caption fonts lack (Arabic, Hebrew, Persian, Urdu). Bundled in
+ * resources/fonts and registered with fontconfig in Dockerfile.web, so captions never render as tofu boxes.
+ */
+export const ARABIC_FALLBACK_FONT = 'NotoNaskhArabic-Bold.ttf'
+
 export const CAPTION_FONTS: CaptionFont[] = [
   { id: 'poppins', name: 'Poppins', family: 'Poppins', cell: 1.762, group: BOLD, file: 'Poppins-Bold.ttf' },
   { id: 'anton', name: 'Anton', family: 'Anton', cell: 1.733, group: BOLD, file: 'Anton-Regular.ttf' },

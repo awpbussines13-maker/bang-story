@@ -82,6 +82,22 @@ dan audio dimatikan lewat parameter kalau modelnya punya. Audio dari file video 
 Kunci kriptografi `safeStorage` baru tertulis ke `Local State` sekitar 10 detik setelah dibuat. Membuatnya saat
 startup (`warmUpEncryption`) mencegah kunci API tidak terbaca setelah aplikasi ditutup paksa.
 
+### Jumlah adegan dan detik per adegan hanya mengatur naskah, bukan timeline
+`sceneCount` dan `sceneSec` adalah *target* untuk penulis naskah: jumlah adegan dan berapa kata per adegan
+(`wordsForMs`, kebalikan dari `estimateNarrationMs`). Panjang klip tetap diambil dari durasi suara yang benar-benar
+direkam (`max(1500ms, durasi audio)`), jadi caption, lirik, dan sinkronisasi tidak berubah. Mengatur detik per
+adegan dengan memotong audio akan membuat caption meleset, jadi sengaja tidak dilakukan. Kalau target melebihi
+`durationSec`, UI hanya memberi peringatan, tidak memotong naskah. Batas: 3–120 adegan, 2–60 detik per adegan.
+Proyek lama tetap `null`, yang berarti perilaku lama (`clipCountFor`, ~5,5 detik per adegan).
+
 ### YouTube embed diberi Referer berisi ID aplikasi
 Halaman dari `file://` tidak mengirim Referer, dan YouTube menolak embed tanpa identitas (Error 153). Header
 ditambahkan hanya untuk `https://www.youtube.com/embed/*`.
+
+### Caption non-Latin butuh fontconfig + font fallback di image
+`ffmpeg-static` membawa libass tapi container tanpa `fontconfig` tidak bisa menemukan font di luar daftar
+bawaannya, sehingga caption Arab/Hebrew/Persia tergambar sebagai kotak tofu. `Dockerfile.web` kini memasang
+`fontconfig` dan mendaftarkan seluruh `resources/fonts` lewat `fc-cache`. Font `NotoNaskhArabic-Bold.ttf`
+disimpan di `resources/fonts` supaya ikut ke build desktop (`extraResources`) dan dipakai libass sebagai
+fallback. Pengukuran lebar baris di `fontMetrics.ts` memakai rantai font (`fontChain`) dengan urutan yang sama,
+jadi kotak caption dan pemenggalan baris cocok dengan yang digambar libass.

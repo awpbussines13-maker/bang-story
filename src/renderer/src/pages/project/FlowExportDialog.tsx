@@ -40,9 +40,19 @@ export function FlowExportDialog({ open, onClose }: { open: boolean; onClose: ()
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ channel: 'export:flowData', args: [project.id] })
           })
-          const d = await r.json()
+          const raw = await r.text()
+          let d: { result?: FlowExportSummary; error?: string }
+          try {
+            d = raw ? JSON.parse(raw) : {}
+          } catch {
+            throw new Error(
+              r.status === 524 || r.status === 504
+                ? 'Server terlalu lama memuat data Flow. Coba lagi sebentar.'
+                : `Server membalas halaman HTML, bukan data (HTTP ${r.status}). Muat ulang halaman lalu coba lagi.`
+            )
+          }
           if (!r.ok || d.error) throw new Error(d.error || 'Gagal memuat data ekspor Flow')
-          res = d.result
+          res = d.result as FlowExportSummary
         }
         if (active) setData(res)
       } catch (err) {

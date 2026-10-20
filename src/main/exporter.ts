@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import ffmpegStatic from 'ffmpeg-static'
 import {
+  ARABIC_FALLBACK_FONT,
   CAPTION_BOX_PAD,
   CAPTION_BOX_RADIUS,
   CAPTION_MAX_WIDTH,
@@ -23,7 +24,7 @@ import { anchorOffset, contrastColor, overlayEnd, textEffects } from '@shared/ov
 import type { Asset, Clip, ExportOptions, ImageOverlay, Job, ProjectBundle, TextOverlay } from '@shared/types'
 import { emit } from './events'
 import { runJob, type TaskCtx } from './jobs'
-import { fontMeasure } from './fontMetrics'
+import { fontChain } from './fontMetrics'
 import { assetAbsPath, binPath, dataDir, fontsDir } from './paths'
 import { getBundle, insertJob, touchProject } from './repo'
 
@@ -198,7 +199,10 @@ function captionStyleLines(track: CaptionTrack, w: number, h: number): string[] 
 function captionEvents(track: CaptionTrack, w: number, h: number): string[] {
   const { chunks, style, pos } = track
   const { px, marginV, pad } = captionMetrics(track, h)
-  const measure = fontMeasure(join(fontsDir(), captionFontFile(style)))
+  // Measure with the caption font first, then the bundled Arabic face: libass falls back the same way,
+  // so the box width and line breaks match what it draws for non-Latin scripts.
+  const fallback = join(fontsDir(), ARABIC_FALLBACK_FONT)
+  const measure = fontChain([join(fontsDir(), captionFontFile(style)), ...(existsSync(fallback) ? [fallback] : [])])
   const lineH = px * style.fontInfo.cell
   const lines: string[] = []
   const base = assInlineColor(style.color)
@@ -517,7 +521,9 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
     }
     writeFileSync(join(tmp, 'graph.txt'), graph.join(';\n'), 'utf8')
 
-    const folder = opts.folder
+    // ffmpeg runs with cwd = tmp, so a relative folder would be created inside the temp dir
+    // and then fail with "No such file or directory". Always resolve it to an absolute path.
+    const folder = isAbsolute(opts.folder) ? opts.folder : join(dataDir(), opts.folder)
     mkdirSync(folder, { recursive: true })
     const base = (opts.fileName.trim() || 'video').replace(/[<>:"/\\|?*]+/g, '-').replace(/\.mp4$/i, '')
     let outPath = join(folder, `${base}.mp4`)

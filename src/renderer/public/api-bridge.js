@@ -47,7 +47,27 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ channel, args })
     })
-    const data = await res.json()
+
+    // Never call res.json() blindly: when a proxy/CDN (Cloudflare 524) or a cold
+    // restart answers with an HTML page, res.json() throws the useless
+    // `Unexpected token '<', "<!DOCTYPE"... is not valid JSON`. Read the text and
+    // turn that case into a message the user can actually act on.
+    const raw = await res.text()
+    let data
+    try {
+      data = raw ? JSON.parse(raw) : {}
+    } catch {
+      const html = raw.trimStart().startsWith('<')
+      if (html) {
+        throw new Error(
+          res.status === 524 || res.status === 504
+            ? `Server terlalu lama memproses "${channel}" (timeout ${res.status}). Coba lagi — proses biasanya lanjut di latar belakang.`
+            : `Server membalas halaman HTML, bukan data (HTTP ${res.status}). Biasanya server sedang restart atau diblokir proxy. Muat ulang halaman lalu coba lagi.`
+        )
+      }
+      throw new Error(`Balasan server tidak bisa dibaca untuk "${channel}" (HTTP ${res.status}).`)
+    }
+
     if (!res.ok || data.error) {
       throw new Error(data.error || `RPC error for ${channel}`)
     }
@@ -126,8 +146,8 @@
         if (namespace === 'exporter') {
           const overrides = {
             start: (projectId, opts) => rpc('export:start', projectId, opts),
-            defaultFolder: () => Promise.resolve('exports'),
-            pickFolder: () => Promise.resolve('exports'),
+            defaultFolder: () => rpc('export:defaultFolder'),
+            pickFolder: () => rpc('export:defaultFolder'),
             flowData: (projectId) => rpc('export:flowData', projectId),
             reveal: (path) => {
               const a = document.createElement('a')

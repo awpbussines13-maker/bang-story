@@ -144,16 +144,43 @@ const server = createServer(async (req, res) => {
     const chunks: Buffer[] = []
     req.on('data', (c) => chunks.push(c))
     req.on('end', async () => {
+      // Some handlers (AI script/visual generation, export) can run for minutes.
+      // Cloudflare cuts the origin connection after 100s and replaces the body
+      // with its own HTML error page, which the browser then reported as
+      // `Unexpected token '<', "<!DOCTYPE"... is not valid JSON`.
+      // Sending the headers immediately and flushing a space every 10s keeps the
+      // stream alive through proxies; leading whitespace is still valid JSON for
+      // the client, so the payload below is parsed normally.
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Accel-Buffering': 'no'
+      })
+      // Push the headers out now instead of waiting for the first body write,
+      // so the client sees an open 200 immediately even on slow handlers.
+      res.flushHeaders?.()
+
+      const keepAlive = setInterval(() => {
+        try {
+          res.write(' ')
+        } catch {
+          /* client already gone */
+        }
+      }, 10000)
+
+      let payload: string
       try {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
         const { channel, args } = body
         const result = await dispatch(channel, args || [])
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ result }))
+        payload = JSON.stringify({ result })
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ error: (err as Error)?.message ?? String(err) }))
+        payload = JSON.stringify({ error: (err as Error)?.message ?? String(err) })
+      } finally {
+        clearInterval(keepAlive)
       }
+
+      res.end(payload)
     })
     return
   }

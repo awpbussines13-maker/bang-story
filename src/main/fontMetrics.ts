@@ -71,21 +71,24 @@ function readCmap(b: Buffer, at: number): (cp: number) => number {
 
 /** A function giving a string's advance width in ems for the font file. */
 export function fontMeasure(file: string): Measure {
-  const hit = cache.get(file)
+  return fontChain([file])
+}
+
+/**
+ * Advance widths for a font stack: characters the first file lacks are measured with the next one, which is
+ * how libass picks a fallback face (e.g. Arabic captions drawn with Noto Naskh over a Latin caption font).
+ */
+export function fontChain(files: string[]): Measure {
+  const key = files.join('|')
+  const hit = cache.get(key)
   if (hit) return hit
-  const b = readFileSync(file)
-  const t = tables(b)
-  const upm = b.readUInt16BE(t.head + 18)
-  const metrics = b.readUInt16BE(t.hhea + 34)
-  const glyphOf = readCmap(b, t.cmap)
-  const advance = (g: number): number => b.readUInt16BE(t.hmtx + Math.min(g, metrics - 1) * 4)
+  const faces = files.map((f) => loadFace(f))
   const widths = new Map<number, number>()
   const width = (cp: number): number => {
     let w = widths.get(cp)
     if (w === undefined) {
-      const g = glyphOf(cp)
-      // A character the font lacks is drawn from a fallback font; guess a typical width.
-      w = g ? advance(g) / upm : 0.55
+      const face = faces.find((f) => f.glyphOf(cp) !== 0)
+      w = face ? face.advance(face.glyphOf(cp)) / face.upm : 0.55
       widths.set(cp, w)
     }
     return w
@@ -95,6 +98,21 @@ export function fontMeasure(file: string): Measure {
     for (const ch of text) sum += width(ch.codePointAt(0)!)
     return sum
   }
-  cache.set(file, measure)
+  cache.set(key, measure)
   return measure
+}
+
+interface Face {
+  upm: number
+  advance: (glyph: number) => number
+  glyphOf: (cp: number) => number
+}
+
+function loadFace(file: string): Face {
+  const b = readFileSync(file)
+  const t = tables(b)
+  const upm = b.readUInt16BE(t.head + 18)
+  const metrics = b.readUInt16BE(t.hhea + 34)
+  const glyphOf = readCmap(b, t.cmap)
+  return { upm, glyphOf, advance: (g) => b.readUInt16BE(t.hmtx + Math.min(g, metrics - 1) * 4) }
 }
