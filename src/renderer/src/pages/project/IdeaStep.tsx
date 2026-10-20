@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bot, Play, Sparkles, Square } from 'lucide-react'
 import { getImageModel } from '@shared/higgsfield'
-import { DURATIONS, LANGUAGES, clipCountFor, llmName } from '@shared/models'
+import { DURATIONS, LANGUAGES, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
+import { sceneTimingOf } from '@shared/timing'
 import type { KeyStatus, LlmProvider, TtsProvider, VoiceOption } from '@shared/types'
+import { SceneShapeField } from '../../components/SceneShapeField'
 import { Select } from '../../components/Select'
 import { StylePicker } from '../../components/StylePicker'
 import { Button, Chip, Field, Segmented, confirmDialog, cx } from '../../components/ui'
@@ -130,7 +132,7 @@ export function IdeaStep() {
     go({ name: 'settings', back: { name: 'project', id: project.id } })
   }
 
-  const clipCount = clipCountFor(project.durationSec)
+  const clipCount = sceneTimingOf(project).count
   const perClip = Math.round(project.durationSec / clipCount)
   const model = getImageModel(project.imageModel)
 
@@ -196,14 +198,30 @@ export function IdeaStep() {
               <span className="text-sm font-semibold">Durasi video</span>
               <div className="flex flex-wrap gap-2">
                 {DURATIONS.map((d) => (
-                  <Chip key={d.sec} on={project.durationSec === d.sec} onClick={() => updateProject({ durationSec: d.sec })} className="h-10 px-4">
+                  <Chip
+                    key={d.sec}
+                    on={project.durationSec === d.sec}
+                    onClick={() => updateProject({ durationSec: d.sec, sceneSec: null })}
+                    className="h-10 px-4"
+                  >
                     {d.label}
                   </Chip>
                 ))}
               </div>
               <span className="text-[13px] text-muted">
-                Sekitar {clipCount} klip, masing-masing kurang lebih {perClip} detik. Durasi akhir mengikuti panjang suara narasi.
+                Durasi akhir mengikuti panjang suara narasi. Adegan dan detik per adegan hanya mengatur
+                seberapa banyak naskah yang ditulis.
               </span>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-sm font-semibold">Jumlah adegan dan detik per adegan</span>
+              <SceneShapeField
+                durationSec={project.durationSec}
+                count={project.sceneCount}
+                sec={project.sceneSec}
+                onChange={(v) => updateProject({ sceneCount: v.count, sceneSec: v.sec })}
+              />
             </div>
 
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-5">

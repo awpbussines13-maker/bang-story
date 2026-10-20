@@ -39,6 +39,8 @@ const toProject = (r: Row): Project => ({
   title: r.title,
   synopsis: r.synopsis,
   durationSec: r.duration_sec,
+  sceneCount: r.scene_count ?? null,
+  sceneSec: r.scene_sec ?? null,
   language: r.language,
   aspectRatio: r.aspect_ratio,
   styleId: r.style_id,
@@ -161,15 +163,17 @@ export function createProject(input: NewProjectInput): Project {
   const tts = input.ttsProvider ?? s.defaultTtsProvider
   getDb()
     .prepare(
-      `INSERT INTO projects (id, title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
+      `INSERT INTO projects (id, title, synopsis, duration_sec, scene_count, scene_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
         image_model, video_model, status, step, editor_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
     )
     .run(
       id,
       'Proyek tanpa judul',
       input.synopsis ?? '',
       input.durationSec ?? 60,
+      input.sceneCount ?? null,
+      input.sceneSec ?? null,
       input.language ?? s.defaultLanguage,
       input.aspectRatio ?? '16:9',
       input.styleId ?? 'stickman',
@@ -224,7 +228,8 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
   const p = snap.project
   db.transaction(() => {
     db.prepare(
-      `UPDATE projects SET title = @title, synopsis = @synopsis, duration_sec = @durationSec, language = @language,
+      `UPDATE projects SET title = @title, synopsis = @synopsis, duration_sec = @durationSec, scene_count = @sceneCount,
+        scene_sec = @sceneSec, language = @language,
         aspect_ratio = @aspectRatio, style_id = @styleId, tts_provider = @ttsProvider, tts_voice = @ttsVoice,
         image_model = @imageModel, video_model = @videoModel, video_resolution = @videoResolution, status = @status, step = @step, editor_json = @editor, updated_at = @now
        WHERE id = @id`

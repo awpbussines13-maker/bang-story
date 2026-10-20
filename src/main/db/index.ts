@@ -133,6 +133,11 @@ const MIGRATIONS: string[] = [
   ALTER TABLE clips ADD COLUMN voice_in_ms INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE clips ADD COLUMN voice_out_ms INTEGER;
   ALTER TABLE clips ADD COLUMN voice_start_ms INTEGER NOT NULL DEFAULT 0;
+  `,
+  // Script shape pinned by the user: scene count and seconds per scene. Null keeps the derived defaults.
+  `
+  ALTER TABLE projects ADD COLUMN scene_count INTEGER;
+  ALTER TABLE projects ADD COLUMN scene_sec INTEGER;
   `
 ]
 

@@ -98,6 +98,12 @@ export interface Project {
   title: string
   synopsis: string
   durationSec: number
+  /**
+   * Pinned script shape. Both are targets, not rules: a scene still plays for as long as its narration
+   * lasts. Null means "decide from durationSec" (the old behaviour).
+   */
+  sceneCount: number | null
+  sceneSec: number | null
   language: string
   aspectRatio: AspectRatio
   styleId: string
@@ -248,6 +254,8 @@ export interface ProjectSnapshot {
 export interface NewProjectInput {
   synopsis?: string
   durationSec?: number
+  sceneCount?: number | null
+  sceneSec?: number | null
   language?: string
   aspectRatio?: AspectRatio
   styleId?: string

@@ -4,6 +4,7 @@ import { DURATIONS, LANGUAGES, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
 import type { ApiProvider, AppSettings, AspectRatio, KeyStatus, ProjectStatus, ProjectSummary, TtsProvider } from '@shared/types'
 import { Logo } from '../components/Logo'
+import { SceneShapeField } from '../components/SceneShapeField'
 import { Select, type SelectOption } from '../components/Select'
 import { StyleSwatch } from '../components/StyleArt'
 import { StyleMenu } from '../components/StyleMenu'
@@ -52,6 +53,8 @@ export function Home() {
   const [query, setQuery] = useState('')
   const [synopsis, setSynopsis] = useState('')
   const [durationSec, setDurationSec] = useState(60)
+  const [sceneCount, setSceneCount] = useState<number | null>(null)
+  const [sceneSec, setSceneSec] = useState<number | null>(null)
   const [language, setLanguage] = useState('id')
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9')
   const [styleId, setStyleId] = useState('stickman')
@@ -115,7 +118,7 @@ export function Home() {
   const start = async (): Promise<void> => {
     setCreating(true)
     try {
-      const b = await window.api.projects.create({ synopsis, durationSec, language, aspectRatio, styleId, ttsProvider: tts })
+      const b = await window.api.projects.create({ synopsis, durationSec, sceneCount, sceneSec, language, aspectRatio, styleId, ttsProvider: tts })
       go({ name: 'project', id: b.project.id })
     } catch (e) {
       toast('error', errorText(e))
@@ -204,7 +207,12 @@ export function Home() {
                   variant="pill"
                   label="Durasi"
                   value={durationSec}
-                  onChange={setDurationSec}
+                  onChange={(sec) => {
+                    setDurationSec(sec)
+                    // A pinned scene length was measured against the old total; drop it so the new
+                    // length is divided again instead of keeping a stale seconds-per-scene.
+                    setSceneSec(null)
+                  }}
                   options={DURATIONS.map((d) => ({ value: d.sec, label: d.label }))}
                 />
                 <Select
@@ -225,6 +233,15 @@ export function Home() {
                 <ArrowRight className="size-[18px]" />
               </Button>
             </div>
+            <SceneShapeField
+              durationSec={durationSec}
+              count={sceneCount}
+              sec={sceneSec}
+              onChange={(v) => {
+                setSceneCount(v.count)
+                setSceneSec(v.sec)
+              }}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[13px] text-ink-2">
             <span>Coba ide ini:</span>

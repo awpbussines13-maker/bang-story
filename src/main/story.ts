@@ -1,6 +1,7 @@
 import { CAMERA_PRESETS, MOTION_STRENGTHS, TRANSITIONS } from '@shared/motion'
-import { LANGUAGES, clipCountFor } from '@shared/models'
+import { LANGUAGES } from '@shared/models'
 import { estimateNarrationMs, needsVisual } from '@shared/script'
+import { sceneTimingOf, wordsForMs } from '@shared/timing'
 import { getStyle } from '@shared/styles'
 import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, TransitionId } from '@shared/types'
 import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, type SceneVisual } from './repo'
@@ -58,7 +59,8 @@ export async function generateScript(projectId: string): Promise<ProjectBundle> 
   const project = getProject(projectId)
   if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
   const lang = languageOf(project.language)
-  const count = clipCountFor(project.durationSec)
+  const timing = sceneTimingOf(project)
+  const count = timing.count
 
   const system = [
     'You are a scriptwriter for faceless YouTube storytelling and explainer videos.',
@@ -71,7 +73,10 @@ export async function generateScript(projectId: string): Promise<ProjectBundle> 
   const prompt = [
     `Idea / synopsis:\n${project.synopsis}`,
     `Target video length: about ${project.durationSec} seconds.`,
-    `Write exactly ${count} scenes.`
+    `Write exactly ${count} scenes.`,
+    // The word budget is what actually lands scenes near the pinned length: the voice, and therefore the
+    // scene on the timeline, is as long as its narration. Asking for seconds instead would be ignored by TTS.
+    `Each scene's narration should be about ${wordsForMs(timing.targetMs)} words, so it is voiced in roughly ${Math.round(timing.targetMs / 1000)} seconds.`
   ].join('\n\n')
 
   const plan = await generateJson<ScriptPlan>({ system, prompt, schema: SCRIPT_SCHEMA, name: 'script' })
