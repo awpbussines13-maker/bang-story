@@ -31,7 +31,19 @@ export function FlowExportDialog({ open, onClose }: { open: boolean; onClose: ()
 
     void flush().then(async () => {
       try {
-        const res = await window.api.exporter.flowData(project.id)
+        let res: FlowExportSummary
+        if (typeof window.api?.exporter?.flowData === 'function') {
+          res = await window.api.exporter.flowData(project.id)
+        } else {
+          const r = await fetch('/api/rpc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channel: 'export:flowData', args: [project.id] })
+          })
+          const d = await r.json()
+          if (!r.ok || d.error) throw new Error(d.error || 'Gagal memuat data ekspor Flow')
+          res = d.result
+        }
         if (active) setData(res)
       } catch (err) {
         if (active) toast('error', errorText(err))

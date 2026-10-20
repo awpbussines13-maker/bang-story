@@ -124,7 +124,7 @@
         }
 
         if (namespace === 'exporter') {
-          return {
+          const overrides = {
             start: (projectId, opts) => rpc('export:start', projectId, opts),
             defaultFolder: () => Promise.resolve('exports'),
             pickFolder: () => Promise.resolve('exports'),
@@ -139,6 +139,12 @@
               return Promise.resolve()
             }
           }
+          return new Proxy(overrides, {
+            get: (target, prop) => {
+              if (prop in target) return target[prop]
+              return (...args) => rpc(`export:${String(prop)}`, ...args)
+            }
+          })
         }
 
         if (namespace === 'app') {

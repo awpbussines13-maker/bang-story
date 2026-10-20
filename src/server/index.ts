@@ -346,7 +346,12 @@ const server = createServer(async (req, res) => {
 
   if (existsSync(filePath)) {
     const type = MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream'
-    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' })
+    const isNoCache = filePath.endsWith('index.html') || filePath.includes('api-bridge')
+    res.writeHead(200, {
+      'Content-Type': type,
+      'Cache-Control': isNoCache ? 'no-store, no-cache, must-revalidate, max-age=0' : 'no-cache',
+      ...(isNoCache ? { Pragma: 'no-cache', Expires: '0' } : {})
+    })
     createReadStream(filePath).pipe(res)
     return
   }
