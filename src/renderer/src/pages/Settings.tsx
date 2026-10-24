@@ -876,18 +876,42 @@ function NineRouterSection({
             <div className="flex flex-col gap-2 border-t border-dashed border-line pt-3">
               <Field label="Model Gambar 9Router">
                 <input
-                  value={settings.nineRouterImageModel || 'ag/gemini-3.1-flash-image'}
+                  value={settings.nineRouterImageModel || 'cf/@cf/black-forest-labs/flux-2-klein-9b'}
                   onChange={async (e) => {
                     onSettings(await window.api.settings.set({ nineRouterImageModel: e.target.value }))
                   }}
-                  placeholder="ag/gemini-3.1-flash-image"
+                  placeholder="cf/@cf/black-forest-labs/flux-2-klein-9b"
                   className={cx(inputCls, 'h-10 font-mono text-sm')}
                 />
               </Field>
               <p className="text-xs text-ink-2">
-                Contoh: <code className="rounded bg-sand px-1 font-mono text-xs">ag/gemini-3.1-flash-image</code>,{' '}
-                <code className="rounded bg-sand px-1 font-mono text-xs">dall-e-3</code>, atau model image di 9Router kamu.
+                Contoh: <code className="rounded bg-sand px-1 font-mono text-xs">cf/@cf/black-forest-labs/flux-2-klein-9b</code>,{' '}
+                <code className="rounded bg-sand px-1 font-mono text-xs">ag/gemini-3.1-flash-image</code>, atau model gambar lain di 9Router kamu.
               </p>
+
+              <div className="mt-2 flex flex-col gap-1.5 border-t border-dashed border-line pt-3">
+                <Field label="Jumlah Paralel Gambar (Concurrency)">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={settings.nineRouterImageConcurrency ?? 5}
+                      onChange={async (e) => {
+                        const val = parseInt(e.target.value, 10)
+                        if (!isNaN(val) && val >= 1) {
+                          onSettings(await window.api.settings.set({ nineRouterImageConcurrency: Math.min(50, val) }))
+                        }
+                      }}
+                      className={cx(inputCls, 'h-10 w-28 font-mono text-sm')}
+                    />
+                    <span className="text-xs text-muted">request bersamaan</span>
+                  </div>
+                </Field>
+                <p className="text-xs text-ink-2">
+                  Atur berapa banyak pembuatan gambar yang diproses bersamaan. Jika punya banyak akun Cloudflare di 9Router, naikkan angka ini (misal 5, 10, atau 15) agar semua akun terpakai seimbang dan proses generate jauh lebih cepat.
+                </p>
+              </div>
             </div>
           </Card>
         </div>

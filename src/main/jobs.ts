@@ -2,8 +2,9 @@ import type { Job } from '@shared/types'
 import { emit } from './events'
 import { getJobRaw, updateJob } from './repo'
 import { cancelRequest } from './services/higgsfield'
+import { getSettings } from './settings'
 
-export type QueueName = 'higgsfield' | 'tts' | 'whisper' | 'export'
+export type QueueName = 'higgsfield' | 'tts' | 'whisper' | 'export' | 'ninerouter-image'
 
 export interface TaskCtx {
   jobId: string
@@ -16,13 +17,26 @@ export interface TaskCtx {
 export type Task = (ctx: TaskCtx) => Promise<string | void | { message: string }>
 
 // Whisper uses most CPU cores by itself, so it runs one file at a time.
-const LIMITS: Record<QueueName, number> = { higgsfield: 3, tts: 2, whisper: 1, export: 1 }
-const running: Record<QueueName, number> = { higgsfield: 0, tts: 0, whisper: 0, export: 0 }
-const waiting: Record<QueueName, (() => void)[]> = { higgsfield: [], tts: [], whisper: [], export: [] }
+const LIMITS: Record<QueueName, number> = { higgsfield: 3, tts: 2, whisper: 1, export: 1, 'ninerouter-image': 5 }
+const running: Record<QueueName, number> = { higgsfield: 0, tts: 0, whisper: 0, export: 0, 'ninerouter-image': 0 }
+const waiting: Record<QueueName, (() => void)[]> = { higgsfield: [], tts: [], whisper: [], export: [], 'ninerouter-image': [] }
 const controllers = new Map<string, AbortController>()
 
+function getLimit(q: QueueName): number {
+  if (q === 'ninerouter-image') {
+    try {
+      const custom = getSettings().nineRouterImageConcurrency
+      return Math.max(1, Math.min(50, Number(custom) || 5))
+    } catch {
+      return LIMITS[q]
+    }
+  }
+  return LIMITS[q] ?? 1
+}
+
 function acquire(q: QueueName): Promise<void> {
-  if (running[q] < LIMITS[q]) {
+  const limit = getLimit(q)
+  if (running[q] < limit) {
     running[q]++
     return Promise.resolve()
   }
@@ -36,7 +50,10 @@ function acquire(q: QueueName): Promise<void> {
 
 function release(q: QueueName): void {
   running[q]--
-  waiting[q].shift()?.()
+  const limit = getLimit(q)
+  while (running[q] < limit && waiting[q].length > 0) {
+    waiting[q].shift()?.()
+  }
 }
 
 export function runJob(job: Job, queue: QueueName, task: Task): Job {

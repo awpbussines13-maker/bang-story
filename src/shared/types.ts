@@ -104,6 +104,8 @@ export interface Project {
    */
   sceneCount: number | null
   sceneSec: number | null
+  /** Chosen custom skill for writing the script. Null means default storytelling prompt. */
+  skillId: string | null
   language: string
   aspectRatio: AspectRatio
   styleId: string
@@ -256,6 +258,7 @@ export interface NewProjectInput {
   durationSec?: number
   sceneCount?: number | null
   sceneSec?: number | null
+  skillId?: string | null
   language?: string
   aspectRatio?: AspectRatio
   styleId?: string
@@ -278,6 +281,19 @@ export interface KeyStatus {
 export interface KeyTestResult {
   ok: boolean
   message: string
+}
+
+export interface Skill {
+  id: string
+  name: string
+  prompt: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface SkillInput {
+  name: string
+  prompt: string
 }
 
 export interface VoiceOption {
@@ -308,6 +324,7 @@ export interface AppSettings {
   nineRouterBaseUrl: string
   nineRouterTtsModel: string
   nineRouterImageModel: string
+  nineRouterImageConcurrency: number
   imageProvider: ImageProvider
 }
 

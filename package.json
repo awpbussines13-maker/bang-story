@@ -8,6 +8,7 @@
   "license": "MIT",
   "private": true,
   "scripts": {
+    "test": "esbuild tests/image-generation.test.ts --bundle --platform=node --format=cjs --packages=external --alias:@shared=./src/shared --outfile=out/tests/image-generation.test.cjs && node --test out/tests/image-generation.test.cjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "build:server": "esbuild src/server/index.ts --bundle --platform=node --target=node22 --outfile=out/server.cjs --format=cjs --external:better-sqlite3 --external:electron --external:ffmpeg-static --alias:@shared=./src/shared",

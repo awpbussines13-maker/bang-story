@@ -4,7 +4,7 @@ import { estimateNarrationMs, needsVisual } from '@shared/script'
 import { sceneTimingOf, wordsForMs } from '@shared/timing'
 import { getStyle } from '@shared/styles'
 import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, TransitionId } from '@shared/types'
-import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, type SceneVisual } from './repo'
+import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, getSkill, replaceScript, type SceneVisual } from './repo'
 import { generateJson } from './services/llm'
 
 const CAMERA_IDS = CAMERA_PRESETS.map((c) => c.id)
@@ -61,15 +61,17 @@ export async function generateScript(projectId: string): Promise<ProjectBundle> 
   const lang = languageOf(project.language)
   const timing = sceneTimingOf(project)
   const count = timing.count
+  const skill = project.skillId ? getSkill(project.skillId) : null
 
   const system = [
     'You are a scriptwriter for faceless YouTube storytelling and explainer videos.',
+    skill?.prompt ? `Follow this writing skill / persona / custom instructions strictly:\n${skill.prompt}` : '',
     'You turn an idea into a sequence of short scenes. Each scene has one line of voice-over.',
     'The first scene is a strong hook. The story has a clear beginning, rising tension and a satisfying ending. The last scene can invite viewers to subscribe.',
     'Keep facts accurate for history and science topics, and always call each character by the same name.',
     'The narration is voiced by an expressive text-to-speech model. Where it helps the delivery, add a few English vocal tags in angle brackets inside the narration, such as <short pause>, <long pause>, <chuckles>, <sigh>, <gasp> or <whispers>. Use them sparingly, at most one or two per scene, and never other markup.',
     `Write everything in ${lang}, except the vocal tags, which stay in English.`
-  ].join(' ')
+  ].filter(Boolean).join('\n\n')
   const prompt = [
     `Idea / synopsis:\n${project.synopsis}`,
     `Target video length: about ${project.durationSec} seconds.`,

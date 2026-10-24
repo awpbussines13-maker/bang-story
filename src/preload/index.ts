@@ -23,6 +23,12 @@ const api: StudioApi = {
     remove: call('projects:remove'),
     duplicate: call('projects:duplicate')
   },
+  skills: {
+    list: call('skills:list'),
+    create: call('skills:create'),
+    update: call('skills:update'),
+    remove: call('skills:remove')
+  },
   story: {
     script: call('story:script'),
     visuals: call('story:visuals'),

@@ -138,6 +138,17 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE projects ADD COLUMN scene_count INTEGER;
   ALTER TABLE projects ADD COLUMN scene_sec INTEGER;
+  `,
+  // Story skills: reusable custom instructions for scriptwriting.
+  `
+  CREATE TABLE skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  ALTER TABLE projects ADD COLUMN skill_id TEXT;
   `
 ]
 

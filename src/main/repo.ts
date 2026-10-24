@@ -15,7 +15,9 @@ import type {
   Project,
   ProjectBundle,
   ProjectSnapshot,
-  ProjectSummary
+  ProjectSummary,
+  Skill,
+  SkillInput
 } from '@shared/types'
 import { visualSourceOf } from '@shared/script'
 import { getDb } from './db'
@@ -41,6 +43,7 @@ const toProject = (r: Row): Project => ({
   durationSec: r.duration_sec,
   sceneCount: r.scene_count ?? null,
   sceneSec: r.scene_sec ?? null,
+  skillId: r.skill_id ?? null,
   language: r.language,
   aspectRatio: r.aspect_ratio,
   styleId: r.style_id,
@@ -163,9 +166,9 @@ export function createProject(input: NewProjectInput): Project {
   const tts = input.ttsProvider ?? s.defaultTtsProvider
   getDb()
     .prepare(
-      `INSERT INTO projects (id, title, synopsis, duration_sec, scene_count, scene_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
+      `INSERT INTO projects (id, title, synopsis, duration_sec, scene_count, scene_sec, skill_id, language, aspect_ratio, style_id, tts_provider, tts_voice,
         image_model, video_model, status, step, editor_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
     )
     .run(
       id,
@@ -174,6 +177,7 @@ export function createProject(input: NewProjectInput): Project {
       input.durationSec ?? 60,
       input.sceneCount ?? null,
       input.sceneSec ?? null,
+      input.skillId ?? null,
       input.language ?? s.defaultLanguage,
       input.aspectRatio ?? '16:9',
       input.styleId ?? 'stickman',
@@ -229,7 +233,7 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
   db.transaction(() => {
     db.prepare(
       `UPDATE projects SET title = @title, synopsis = @synopsis, duration_sec = @durationSec, scene_count = @sceneCount,
-        scene_sec = @sceneSec, language = @language,
+        scene_sec = @sceneSec, skill_id = @skillId, language = @language,
         aspect_ratio = @aspectRatio, style_id = @styleId, tts_provider = @ttsProvider, tts_voice = @ttsVoice,
         image_model = @imageModel, video_model = @videoModel, video_resolution = @videoResolution, status = @status, step = @step, editor_json = @editor, updated_at = @now
        WHERE id = @id`
@@ -736,3 +740,51 @@ export function activeJobFor(target: { clipId?: string; characterId?: string }, 
     .get(kind, target.clipId ?? target.characterId) as Row | undefined
   return r ? toJob(r) : null
 }
+
+// ---------- skills ----------
+
+export const toSkill = (r: Row): Skill => ({
+  id: r.id,
+  name: r.name,
+  prompt: r.prompt,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at
+})
+
+export function listSkills(): Skill[] {
+  const rows = getDb().prepare('SELECT * FROM skills ORDER BY updated_at DESC, created_at DESC').all() as Row[]
+  return rows.map(toSkill)
+}
+
+export function getSkill(id: string): Skill | null {
+  const r = getDb().prepare('SELECT * FROM skills WHERE id = ?').get(id) as Row | undefined
+  return r ? toSkill(r) : null
+}
+
+export function createSkill(input: SkillInput): Skill {
+  const now = Date.now()
+  const id = randomUUID()
+  getDb()
+    .prepare('INSERT INTO skills (id, name, prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, input.name.trim() || 'Skill Baru', input.prompt.trim(), now, now)
+  return getSkill(id)!
+}
+
+export function updateSkill(id: string, input: Partial<SkillInput>): Skill {
+  const now = Date.now()
+  const existing = getSkill(id)
+  if (!existing) throw new Error('Skill tidak ditemukan')
+  const name = input.name !== undefined ? input.name.trim() || 'Skill Baru' : existing.name
+  const prompt = input.prompt !== undefined ? input.prompt.trim() : existing.prompt
+  getDb()
+    .prepare('UPDATE skills SET name = ?, prompt = ?, updated_at = ? WHERE id = ?')
+    .run(name, prompt, now, id)
+  return getSkill(id)!
+}
+
+export function removeSkill(id: string): void {
+  getDb().prepare('DELETE FROM skills WHERE id = ?').run(id)
+  // Null out references in projects
+  getDb().prepare('UPDATE projects SET skill_id = NULL WHERE skill_id = ?').run(id)
+}
+

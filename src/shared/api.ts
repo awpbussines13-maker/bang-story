@@ -20,6 +20,8 @@ import type {
   ProjectBundle,
   ProjectSnapshot,
   ProjectSummary,
+  Skill,
+  SkillInput,
   TtsProvider,
   VoiceOption
 } from './types'
@@ -33,6 +35,12 @@ export interface StudioApi {
     save(snapshot: ProjectSnapshot): Promise<{ updatedAt: number }>
     remove(id: string): Promise<void>
     duplicate(id: string): Promise<ProjectSummary>
+  }
+  skills: {
+    list(): Promise<Skill[]>
+    create(input: SkillInput): Promise<Skill>
+    update(id: string, input: Partial<SkillInput>): Promise<Skill>
+    remove(id: string): Promise<void>
   }
   story: {
     /** Idea → scene-by-scene script (story and voice-over). */

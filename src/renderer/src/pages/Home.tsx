@@ -5,6 +5,7 @@ import { getStyle } from '@shared/styles'
 import type { ApiProvider, AppSettings, AspectRatio, KeyStatus, ProjectStatus, ProjectSummary, TtsProvider } from '@shared/types'
 import { Logo } from '../components/Logo'
 import { SceneShapeField } from '../components/SceneShapeField'
+import { SkillSelector } from '../components/SkillSelector'
 import { Select, type SelectOption } from '../components/Select'
 import { StyleSwatch } from '../components/StyleArt'
 import { StyleMenu } from '../components/StyleMenu'
@@ -55,6 +56,9 @@ export function Home() {
   const [durationSec, setDurationSec] = useState(60)
   const [sceneCount, setSceneCount] = useState<number | null>(null)
   const [sceneSec, setSceneSec] = useState<number | null>(null)
+  const [skillId, setSkillId] = useState<string | null>(null)
+  // When either scene pin is set the scene shape owns the length, so the minute presets are locked.
+  const sceneShapePinned = sceneCount != null || sceneSec != null
   const [language, setLanguage] = useState('id')
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9')
   const [styleId, setStyleId] = useState('stickman')
@@ -118,7 +122,7 @@ export function Home() {
   const start = async (): Promise<void> => {
     setCreating(true)
     try {
-      const b = await window.api.projects.create({ synopsis, durationSec, sceneCount, sceneSec, language, aspectRatio, styleId, ttsProvider: tts })
+      const b = await window.api.projects.create({ synopsis, durationSec, sceneCount, sceneSec, skillId, language, aspectRatio, styleId, ttsProvider: tts })
       go({ name: 'project', id: b.project.id })
     } catch (e) {
       toast('error', errorText(e))
@@ -213,7 +217,16 @@ export function Home() {
                     // length is divided again instead of keeping a stale seconds-per-scene.
                     setSceneSec(null)
                   }}
-                  options={DURATIONS.map((d) => ({ value: d.sec, label: d.label }))}
+                  options={DURATIONS.map((d) => ({
+                    value: d.sec,
+                    label: d.label,
+                    // Once the scene shape is pinned it decides the length; a total in minutes would
+                    // fight it, so the presets are listed but cannot be picked.
+                    disabled: sceneShapePinned,
+                    note: sceneShapePinned ? 'Dinonaktifkan: durasi mengikuti jumlah adegan' : undefined,
+                  }))}
+                  disabled={sceneShapePinned}
+                  className={sceneShapePinned ? 'opacity-55' : undefined}
                 />
                 <Select
                   variant="pill"
@@ -226,6 +239,7 @@ export function Home() {
                 <Select variant="pill" label="Format" value={aspectRatio} onChange={setAspectRatio} options={ASPECTS} menuWidth={200} />
                 <StyleMenu value={styleId} onChange={setStyleId} />
                 <Select variant="pill" label="Suara narator" value={tts} onChange={setTts} options={ttsOptions} menuWidth={280} />
+                <SkillSelector value={skillId} onChange={setSkillId} />
               </div>
               <div className="hidden sm:block sm:flex-1" />
               <Button variant="primary" size="lg" className="w-full sm:w-auto mt-2 sm:mt-0" loading={creating} onClick={() => void start()}>

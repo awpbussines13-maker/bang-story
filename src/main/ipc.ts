@@ -29,6 +29,7 @@ import type {
   ModelSource,
   NewProjectInput,
   ProjectSnapshot,
+  SkillInput,
   TtsProvider,
   VoiceOption,
   WordTiming
@@ -55,16 +56,20 @@ import { detachVoice, splitClip } from './editing'
 import { emit } from './events'
 import {
   createProject,
+  createSkill,
   duplicateProject,
   getAsset,
   getBundle,
   getProject,
   insertAsset,
   listProjects,
+  listSkills,
   removeProject,
+  removeSkill,
   saveSnapshot,
   patchClip,
-  updateAssetMeta
+  updateAssetMeta,
+  updateSkill
 } from './repo'
 import { clearSecret, keyStatuses, recordCheck, revealSecret, setSecret } from './secrets'
 import { dropCache, getSettings, setSettings } from './settings'
@@ -124,6 +129,11 @@ export function registerIpc(): void {
   handle('projects:save', (snap: ProjectSnapshot) => ({ updatedAt: saveSnapshot(snap) }))
   handle('projects:remove', (id: string) => removeProject(id))
   handle('projects:duplicate', (id: string) => duplicateProject(id))
+
+  handle('skills:list', () => listSkills())
+  handle('skills:create', (input: SkillInput) => createSkill(input))
+  handle('skills:update', (id: string, input: Partial<SkillInput>) => updateSkill(id, input))
+  handle('skills:remove', (id: string) => removeSkill(id))
 
   handle('story:script', (projectId: string) => generateScript(projectId))
   handle('story:musicPrompt', (projectId: string) => generateMusicPrompt(projectId))

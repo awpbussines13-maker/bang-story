@@ -161,7 +161,7 @@ export async function generateImage(
 ): Promise<{ bytes: Buffer; contentType: string }> {
   const base = getBaseUrl()
   const key = getKey()
-  const model = modelOverride || getSettings().nineRouterImageModel || 'ag/gemini-3.1-flash-image'
+  const model = modelOverride || getSettings().nineRouterImageModel || 'cf/@cf/black-forest-labs/flux-2-klein-9b'
 
   const res = await fetch(`${base}/images/generations`, {
     method: 'POST',
@@ -173,7 +173,11 @@ export async function generateImage(
       model,
       prompt,
       n: 1,
-      size
+      size: size || 'auto',
+      quality: 'auto',
+      background: 'auto',
+      image_detail: 'high',
+      output_format: 'png'
     }),
     signal
   })
@@ -194,7 +198,8 @@ export async function generateImage(
   if (!item) throw new Error('9Router Image tidak menghasilkan gambar')
 
   if (item.b64_json) {
-    return { bytes: Buffer.from(item.b64_json, 'base64'), contentType: 'image/png' }
+    const isJpg = item.b64_json.startsWith('/9j/')
+    return { bytes: Buffer.from(item.b64_json, 'base64'), contentType: isJpg ? 'image/jpeg' : 'image/png' }
   }
 
   if (item.url) {

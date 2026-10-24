@@ -195,7 +195,7 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
           )}
           {!image && !isRunning(imageJob) && (
             <div className="absolute inset-x-0 bottom-6 flex justify-center">
-              <Button variant="accent" icon={<Sparkles className="size-4" />} onClick={() => void run(() => window.api.generate.clipImage(clip.id))}>
+              <Button variant="accent" icon={<Sparkles className="size-4" />} disabled={needsVisual(clip)} title={needsVisual(clip) ? 'Susun atau perbarui visual adegan dulu.' : undefined} onClick={() => void run(() => window.api.generate.clipImage(clip.id))}>
                 Generate gambar
               </Button>
             </div>
@@ -231,6 +231,8 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
               size="sm"
               icon={<RefreshCw className="size-4" />}
               loading={isRunning(imageJob)}
+              disabled={needsVisual(clip)}
+              title={needsVisual(clip) ? 'Susun atau perbarui visual adegan dulu.' : undefined}
               onClick={() => void run(() => window.api.generate.clipImage(clip.id))}
             >
               Generate ulang
@@ -457,7 +459,16 @@ export function StoryboardStep() {
   const [credits, setCredits] = useState<number | null>(null)
   const [videoCredits, setVideoCredits] = useState<number | null>(null)
   const [planning, setPlanning] = useState(false)
+  const [concurrency, setConcurrency] = useState<number>(5)
+  const [isNineRouter, setIsNineRouter] = useState<boolean>(false)
   const lastNarration = useRef<string | null>(null)
+
+  useEffect(() => {
+    void window.api.settings.get().then((s) => {
+      setIsNineRouter(project?.imageProvider === '9router' || s.imageProvider === '9router')
+      setConcurrency(s.nineRouterImageConcurrency || 5)
+    })
+  }, [project?.imageProvider])
 
   // A failed narration take is reported once, when it happens.
   useEffect(() => {
@@ -542,6 +553,7 @@ export function StoryboardStep() {
 
   // Scenes added or rewritten in the script since the last visual plan.
   const stale = clips.filter(needsVisual).length
+  const missingPlans = clips.some((c) => !c.imageAssetId && needsVisual(c))
   const planVisuals = async (): Promise<void> => {
     setPlanning(true)
     try {
@@ -615,10 +627,31 @@ export function StoryboardStep() {
                 ? `Perbarui suara narasi (${narration.stale})`
                 : 'Rekam ulang suara narasi'}
         </Button>
+        {isNineRouter && (
+          <div
+            className="flex items-center gap-1.5 rounded-lg border border-line bg-sand/60 px-2.5 py-1 text-xs text-ink-2"
+            title="Batas paralel ke 9Router (sesuaikan dengan jumlah akun Cloudflare)"
+          >
+            <span>⚡ Paralel:</span>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={concurrency}
+              onChange={async (e) => {
+                const val = Math.max(1, Math.min(50, parseInt(e.target.value, 10) || 1))
+                setConcurrency(val)
+                await window.api.settings.set({ nineRouterImageConcurrency: val })
+              }}
+              className="h-6 w-11 rounded border border-line bg-white text-center font-mono font-bold text-ink"
+            />
+          </div>
+        )}
         <Button
           className="border-[1.5px] border-ink font-semibold"
           icon={<ImageIcon className="size-[17px]" />}
-          disabled={!stats.needImg}
+          disabled={!stats.needImg || missingPlans}
+          title={missingPlans ? 'Susun atau perbarui visual adegan dulu.' : undefined}
           onClick={() => void bulk(() => window.api.generate.missingImages(project.id))}
         >
           Generate {stats.needImg} gambar

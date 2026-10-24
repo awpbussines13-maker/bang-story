@@ -16,7 +16,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   whisperAuto: true,
   nineRouterBaseUrl: 'http://127.0.0.1:20128/v1',
   nineRouterTtsModel: 'gemini/gemini-3.1-flash-tts-preview',
-  nineRouterImageModel: 'ag/gemini-3.1-flash-image',
+  nineRouterImageModel: 'cf/@cf/black-forest-labs/flux-2-klein-9b',
+  nineRouterImageConcurrency: 5,
   imageProvider: 'higgsfield'
 }
 

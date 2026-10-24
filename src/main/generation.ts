@@ -5,6 +5,7 @@ import { estimateWordTimings } from '@shared/captions'
 import { stripVoiceTags } from '@shared/speech'
 import { getImageModel, getVideoModel, imageBody, maxRefs, promptLimit, videoBody, type HfModel } from '@shared/higgsfield'
 import { getStyle } from '@shared/styles'
+import { needsVisual } from '@shared/script'
 import type { AspectRatio, Asset, Character, Clip, CreditEstimate, Job, Project, WordTiming } from '@shared/types'
 import { getDb } from './db'
 import { emit } from './events'
@@ -89,12 +90,19 @@ function splitAvoid(visual: string): { scene: string; avoid: string } {
   return { scene: lines.join('\n').trim(), avoid }
 }
 
+function assertVisualReady(clip: Clip): void {
+  if (needsVisual(clip) || !splitAvoid(clip.visualPrompt).scene) {
+    throw new Error(`Rencana visual adegan "${clip.title}" belum siap atau naskahnya sudah berubah. Susun atau perbarui visual adegan dulu sebelum membuat gambar.`)
+  }
+}
+
 /**
  * The image prompt for a clip. The scene comes first so the model gets the content right, then who the
  * characters are, then the art style. Clothing follows the scene's Wardrobe line when it has one, so a
  * character can change out of the outfit on their reference sheet (no spacesuit indoors).
  */
 function clipPrompt(project: Project, clip: Clip, chars: Character[], refNames: string[], limit: number): string {
+  assertVisualReady(clip)
   const style = getStyle(project.styleId)
   const { scene, avoid } = splitAvoid(clip.visualPrompt)
   const wardrobe = /^\s*wardrobe\s*:/im.test(scene)
@@ -238,12 +246,12 @@ function updateJobPayload(jobId: string, payload: HfPayload): void {
 
 function startNineRouterImage(job: Job, build: (ctx: TaskCtx) => Promise<{ prompt: string }>): Job {
   emit.job(job)
-  return runJob(job, 'higgsfield', async (ctx) => {
+  return runJob(job, 'ninerouter-image', async (ctx) => {
     ctx.progress(0.1, 'Menyiapkan prompt gambar')
     const { prompt } = await build(ctx)
     ctx.progress(0.2, 'Mengirim ke 9Router Image Generator')
     const s = getSettings()
-    const model = s.nineRouterImageModel || 'ag/gemini-3.1-flash-image'
+    const model = s.nineRouterImageModel || 'cf/@cf/black-forest-labs/flux-2-klein-9b'
     const project = getProject(job.projectId)
     const size = project.aspectRatio === '9:16' ? '1024x1792' : '1792x1024'
     const { bytes, contentType } = await ninerouter.generateImage(prompt, model, size, ctx.signal)
@@ -283,31 +291,38 @@ function startNineRouterImage(job: Job, build: (ctx: TaskCtx) => Promise<{ promp
 // ---------- public entry points ----------
 
 export function generateClipImage(clipId: string): Job {
+  const clip = getClip(clipId)
+  assertVisualReady(clip)
   const existing = activeJobFor({ clipId }, 'image')
   if (existing) return existing
-  const clip = getClip(clipId)
   const project = getProject(clip.projectId)
   const s = getSettings()
   const useNineRouter = project.imageProvider === '9router' || s.imageProvider === '9router'
   const job = insertJob({ projectId: clip.projectId, clipId, kind: 'image', provider: useNineRouter ? '9router' : 'higgsfield' })
   if (useNineRouter) {
-    return startNineRouterImage(job, async (ctx) => {
+    return startNineRouterImage(job, async () => {
       const fresh = getClip(clipId)
+      assertVisualReady(fresh)
       const proj = getProject(fresh.projectId)
       const chars = charactersOf(proj.id).filter((c) => fresh.characterIds.includes(c.id))
-      const model = getImageModel(proj.imageModel)
-      const refs = await referenceUrls(model, chars, ctx.signal).catch(() => ({ names: [], urls: [] }))
-      const prompt = clipPrompt(proj, fresh, chars, refs.names, 1000)
+      // This endpoint sends text only; do not wait for or claim to attach Higgsfield references.
+      const prompt = clipPrompt(proj, fresh, chars, [], 1000)
       return { prompt }
     })
   }
   return startHiggsfield(job, async (ctx) => {
     const fresh = getClip(clipId)
+    assertVisualReady(fresh)
     const proj = getProject(fresh.projectId)
     const model = getImageModel(proj.imageModel)
     const chars = charactersOf(proj.id).filter((c) => fresh.characterIds.includes(c.id))
     const refs = await referenceUrls(model, chars, ctx.signal)
-    const prompt = clipPrompt(proj, fresh, chars, refs.names, promptLimit(model))
+    const ready = getClip(clipId)
+    assertVisualReady(ready)
+    if (ready.characterIds.join(',') !== fresh.characterIds.join(',')) {
+      throw new Error('Pemeran dalam rencana visual berubah saat menunggu referensi. Coba buat gambar lagi.')
+    }
+    const prompt = clipPrompt(proj, ready, chars, refs.names, promptLimit(model))
     return {
       endpoint: model.id,
       body: imageBody(model, prompt, proj.aspectRatio, refs.urls),
@@ -427,6 +442,9 @@ export function generateClipTts(clipId: string): Job {
 }
 
 export function generateMissingImages(projectId: string): Job[] {
+  const missing = clipsOf(projectId).filter((clip) => !clip.imageAssetId)
+  // Validate the whole batch before creating sheets or enqueueing any paid requests.
+  missing.forEach(assertVisualReady)
   const jobs: Job[] = []
   const project = getProject(projectId)
   const model = getImageModel(project.imageModel)
@@ -436,8 +454,8 @@ export function generateMissingImages(projectId: string): Job[] {
       if (needed.has(c.id) && !c.sheetAssetId) jobs.push(generateCharacterSheet(c.id))
     }
   }
-  for (const clip of clipsOf(projectId)) {
-    if (!clip.imageAssetId) jobs.push(generateClipImage(clip.id))
+  for (const clip of missing) {
+    jobs.push(generateClipImage(clip.id))
   }
   return jobs
 }

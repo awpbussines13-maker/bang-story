@@ -66,6 +66,12 @@ menyusun ulang semuanya. Pemeran lama tidak ditimpa; pemeran baru ditambahkan be
 - **Gambar klip** (`clipPrompt`): adegan dulu, lalu pemeran (tubuh dari lembar karakter, baju mengikuti baris
   `Wardrobe`), lalu gaya visual, lalu baris `Avoid` sebagai "Must not appear", lalu format frame. Lembar karakter
   dikirim sebagai gambar referensi.
+- Gambar hanya boleh dibuat kalau prompt visual berisi adegan dan berasal dari naskah terbaru. Pemeriksaan
+  dilakukan sebelum antrean dibuat dan sebelum permintaan dikirim, termasuk setelah menunggu referensi.
+  Proses massal memeriksa semua klip yang belum punya gambar sebelum membuat job apa pun. Ini mencegah
+  prompt `Scene:` kosong yang hanya mengirim gaya, lalu menghasilkan gambar tanpa hubungan dengan cerita.
+- Endpoint gambar 9Router saat ini hanya mengirim teks: deskripsi pemeran disertakan, tetapi lembar karakter
+  tidak dikirim dan tidak diunggah ke Higgsfield. Prompt tidak mengklaim ada referensi gambar terlampir.
 - **Video AI** (`generateClipVideo`): gambar klip + `videoPrompt` (atau prompt cadangan). Setiap prompt video
   diakhiri `NO_MUSIC` ("Silent clip: no background music...") dan audio dimatikan lewat parameter kalau
   modelnya punya (`sound: off`, `generate_audio: false`). Durasi video = durasi terpendek model yang menutup

@@ -6,6 +6,7 @@ import { getStyle } from '@shared/styles'
 import { sceneTimingOf } from '@shared/timing'
 import type { KeyStatus, LlmProvider, TtsProvider, VoiceOption } from '@shared/types'
 import { SceneShapeField } from '../../components/SceneShapeField'
+import { SkillSelector } from '../../components/SkillSelector'
 import { Select } from '../../components/Select'
 import { StylePicker } from '../../components/StylePicker'
 import { Button, Chip, Field, Segmented, confirmDialog, cx } from '../../components/ui'
@@ -134,6 +135,7 @@ export function IdeaStep() {
 
   const clipCount = sceneTimingOf(project).count
   const perClip = Math.round(project.durationSec / clipCount)
+  const sceneShapePinned = project.sceneCount != null || project.sceneSec != null
   const model = getImageModel(project.imageModel)
 
   const compose = async (): Promise<void> => {
@@ -201,16 +203,23 @@ export function IdeaStep() {
                   <Chip
                     key={d.sec}
                     on={project.durationSec === d.sec}
+                    disabled={sceneShapePinned}
+                    title={
+                      sceneShapePinned
+                        ? 'Dinonaktifkan karena jumlah adegan dan detik per adegan sudah diatur'
+                        : undefined
+                    }
                     onClick={() => updateProject({ durationSec: d.sec, sceneSec: null })}
-                    className="h-10 px-4"
+                    className={cx('h-10 px-4', sceneShapePinned && 'opacity-50')}
                   >
                     {d.label}
                   </Chip>
                 ))}
               </div>
               <span className="text-[13px] text-muted">
-                Durasi akhir mengikuti panjang suara narasi. Adegan dan detik per adegan hanya mengatur
-                seberapa banyak naskah yang ditulis.
+                {sceneShapePinned
+                  ? 'Durasi mengikuti jumlah adegan × detik per adegan. Kosongkan salah satunya untuk memakai durasi menit lagi.'
+                  : 'Durasi akhir mengikuti panjang suara narasi. Adegan dan detik per adegan hanya mengatur seberapa banyak naskah yang ditulis.'}
               </span>
             </div>
 
@@ -222,6 +231,18 @@ export function IdeaStep() {
                 sec={project.sceneSec}
                 onChange={(v) => updateProject({ sceneCount: v.count, sceneSec: v.sec })}
               />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-sm font-semibold">Skill / Gaya penceritaan khusus</span>
+              <SkillSelector
+                variant="field"
+                value={project.skillId}
+                onChange={(id) => updateProject({ skillId: id })}
+              />
+              <span className="text-[13px] text-muted">
+                Pilih gaya penulisan naskah yang tersimpan atau buat skill baru sesuai karakter cerita kamu.
+              </span>
             </div>
 
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-5">
