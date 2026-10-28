@@ -26,6 +26,8 @@ export const DEFAULT_EDITOR: EditorSettings = {
   captionStyle: 'karaoke',
   captionPosition: 'bawah',
   captionSize: 'sedang',
+  captionBg: null,
+  captionScale: 0.9,
   musicAssetId: null,
   musicVolumeDb: -18,
   duckMusic: true,
@@ -34,26 +36,35 @@ export const DEFAULT_EDITOR: EditorSettings = {
 
 type Row = Record<string, any>
 
-const toProject = (r: Row): Project => ({
-  id: r.id,
-  title: r.title,
-  synopsis: r.synopsis,
-  durationSec: r.duration_sec,
-  language: r.language,
-  aspectRatio: r.aspect_ratio,
-  styleId: r.style_id,
-  ttsProvider: r.tts_provider,
-  ttsVoice: r.tts_voice,
-  imageModel: r.image_model,
-  videoModel: r.video_model,
-  videoResolution: r.video_resolution ?? null,
-  status: r.status,
-  step: r.step,
-  coverAssetId: r.cover_asset_id,
-  editor: { ...DEFAULT_EDITOR, ...JSON.parse(r.editor_json || '{}') },
-  createdAt: r.created_at,
-  updatedAt: r.updated_at
-})
+const toProject = (r: Row): Project => {
+  const savedEditor = (JSON.parse(r.editor_json || '{}') ?? {}) as Partial<EditorSettings>
+  const editorDefaults = { ...DEFAULT_EDITOR }
+
+  // Missing caption values in older rows keep the preset's original background and size behavior.
+  if (!Object.prototype.hasOwnProperty.call(savedEditor, 'captionBg')) editorDefaults.captionBg = undefined
+  if (!Object.prototype.hasOwnProperty.call(savedEditor, 'captionScale')) editorDefaults.captionScale = undefined
+
+  return {
+    id: r.id,
+    title: r.title,
+    synopsis: r.synopsis,
+    durationSec: r.duration_sec,
+    language: r.language,
+    aspectRatio: r.aspect_ratio,
+    styleId: r.style_id,
+    ttsProvider: r.tts_provider,
+    ttsVoice: r.tts_voice,
+    imageModel: r.image_model,
+    videoModel: r.video_model,
+    videoResolution: r.video_resolution ?? null,
+    status: r.status,
+    step: r.step,
+    coverAssetId: r.cover_asset_id,
+    editor: { ...editorDefaults, ...savedEditor },
+    createdAt: r.created_at,
+    updatedAt: r.updated_at
+  }
+}
 
 const toCharacter = (r: Row): Character => ({
   id: r.id,

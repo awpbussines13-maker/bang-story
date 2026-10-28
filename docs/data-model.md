@@ -125,7 +125,7 @@ Narasi dianggap **basi** (perlu direkam ulang) kalau `asset.prompt` berbeda dari
 | `overlays` | logo/gambar dan teks di atas video (`Overlay[]`) |
 | `musicPrompt` | prompt musik AI terakhir (untuk Suno dll.) |
 
-Properti opsional baru di `EditorSettings` tidak butuh migrasi; berikan nilai bawaan saat dibaca (`?? 0`).
+Proyek baru memakai `captionBg: null` (tanpa latar) dan `captionScale: 0.9` (90%). Untuk proyek lama yang JSON-nya tidak menyimpan salah satu nilai ini, biarkan nilainya `undefined` agar fallback latar preset dan ukuran `captionSize` lama tetap berlaku. Properti opsional baru lainnya tidak butuh migrasi; berikan nilai bawaan saat dibaca (`?? 0`).
 
 ## Pengaturan aplikasi (`AppSettings`, tabel `settings`)
 
