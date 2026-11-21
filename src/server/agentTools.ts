@@ -186,8 +186,8 @@ async function snapshotFor(projectId: string): Promise<{ bundle: ProjectBundle; 
     bundle,
     snapshot: {
       project,
-      characters: bundle.characters.map(({ sheetAssetId: _sheetAssetId, referenceImageAssetId: _reference, ...character }) => character),
-      clips: bundle.clips.map(({ imageAssetId: _imageAssetId, videoAssetId: _videoAssetId, audioAssetId: _audioAssetId, importedImageAssetId: _imported, imageFit: _fit, ...clip }) => clip)
+      characters: bundle.characters.map(({ sheetAssetId: _sheetAssetId, referenceImageAssetId: _reference, flowId: _flow, ...character }) => character),
+      clips: bundle.clips.map(({ imageAssetId: _imageAssetId, videoAssetId: _videoAssetId, audioAssetId: _audioAssetId, importedImageAssetId: _imported, imageFit: _fit, flowId: _flow, ...clip }) => clip)
     }
   }
 }
@@ -398,7 +398,7 @@ export function registerAgentTools(server: McpServer, options: { token: string; 
       voiceGainDb: 0, mediaInMs: 0, voiceInMs: 0, voiceOutMs: null, voiceStartMs: 0, importedImageAssetId: null, imageFit: 'cover', imageAssetId: null, videoAssetId: null, audioAssetId: null
     }
     Object.assign(clip, patch)
-    const { imageAssetId: _image, videoAssetId: _video, audioAssetId: _audio, importedImageAssetId: _imported, imageFit: _fit, ...snapshotClip } = clip
+    const { imageAssetId: _image, videoAssetId: _video, audioAssetId: _audio, importedImageAssetId: _imported, imageFit: _fit, flowId: _flow, ...snapshotClip } = clip
     snapshot.clips.splice(at, 0, snapshotClip)
     snapshot.clips = snapshot.clips.map((value, sort) => ({ ...value, sort }))
     return saveSnapshot(snapshot, projectId)

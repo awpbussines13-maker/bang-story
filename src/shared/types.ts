@@ -128,6 +128,7 @@ export interface Project {
 
 export interface Character {
   id: string
+  flowId?: string
   projectId: string
   name: string
   description: string
@@ -139,6 +140,7 @@ export interface Character {
 
 export interface Clip {
   id: string
+  flowId?: string
   projectId: string
   sort: number
   title: string
@@ -283,8 +285,8 @@ export interface ProjectSummary {
 /** What the renderer sends on save. Asset links are owned by the main process and never overwritten by a save. */
 export interface ProjectSnapshot {
   project: Omit<Project, 'createdAt' | 'updatedAt' | 'coverAssetId'>
-  characters: Omit<Character, 'sheetAssetId' | 'referenceImageAssetId'>[]
-  clips: Omit<Clip, 'imageAssetId' | 'videoAssetId' | 'audioAssetId' | 'importedImageAssetId' | 'imageFit'>[]
+  characters: Omit<Character, 'sheetAssetId' | 'referenceImageAssetId' | 'flowId'>[]
+  clips: Omit<Clip, 'imageAssetId' | 'videoAssetId' | 'audioAssetId' | 'importedImageAssetId' | 'imageFit' | 'flowId'>[]
 }
 
 export interface NewProjectInput {

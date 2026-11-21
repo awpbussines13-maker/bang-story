@@ -46,8 +46,8 @@ function snapshot(s: ProjectState): ProjectSnapshot {
   const { createdAt: _c, updatedAt: _u, coverAssetId: _cv, ...project } = s.project!
   return {
     project,
-    characters: s.characters.map(({ sheetAssetId: _s, referenceImageAssetId: _r, ...c }) => c),
-    clips: s.clips.map(({ imageAssetId: _i, videoAssetId: _v, audioAssetId: _a, importedImageAssetId: _imp, imageFit: _fit, ...c }) => c)
+    characters: s.characters.map(({ sheetAssetId: _s, referenceImageAssetId: _r, flowId: _flow, ...c }) => c),
+    clips: s.clips.map(({ imageAssetId: _i, videoAssetId: _v, audioAssetId: _a, importedImageAssetId: _imp, imageFit: _fit, flowId: _flow, ...c }) => c)
   }
 }
 

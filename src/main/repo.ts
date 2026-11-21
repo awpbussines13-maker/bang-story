@@ -1,4 +1,4 @@
-import { makeReferencePrompt } from '@shared/flowV2'
+import { characterFlowIds, clipFlowId, makeReferencePrompt } from '@shared/flowV2'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
@@ -62,6 +62,7 @@ const toProject = (r: Row): Project => ({
 
 const toCharacter = (r: Row): Character => ({
   id: r.id,
+  flowId: r.flow_id ?? undefined,
   projectId: r.project_id,
   name: r.name,
   description: r.description,
@@ -73,6 +74,7 @@ const toCharacter = (r: Row): Character => ({
 
 const toClip = (r: Row): Clip => ({
   id: r.id,
+  flowId: r.flow_id ?? undefined,
   projectId: r.project_id,
   sort: r.sort,
   title: r.title,
@@ -229,10 +231,29 @@ export function getProject(id: string): Project {
 
 export function getBundle(id: string): ProjectBundle {
   const db = getDb()
+  const project = getProject(id)
+  const characters = charactersOf(id)
+  const clips = clipsOf(id)
+  const castIds = characterFlowIds(characters)
+  const changedCharacters = characters.flatMap((c, i) => c.flowId === castIds[i] ? [] : [{ row: c, flowId: castIds[i] }])
+  const changedClips = clips.flatMap((c, i) => c.flowId === clipFlowId(i) ? [] : [{ row: c, flowId: clipFlowId(i) }])
+  // Backfill or refresh public IDs without changing primary keys used by assets and jobs.
+  if (changedCharacters.length || changedClips.length) db.transaction(() => {
+    const updateCharacter = db.prepare('UPDATE characters SET flow_id = ? WHERE id = ?')
+    const updateClip = db.prepare('UPDATE clips SET flow_id = ? WHERE id = ?')
+    for (const { row, flowId } of changedCharacters) {
+      updateCharacter.run(flowId, row.id)
+      row.flowId = flowId
+    }
+    for (const { row, flowId } of changedClips) {
+      updateClip.run(flowId, row.id)
+      row.flowId = flowId
+    }
+  })()
   return {
-    project: getProject(id),
-    characters: (db.prepare('SELECT * FROM characters WHERE project_id = ? ORDER BY sort').all(id) as Row[]).map(toCharacter),
-    clips: (db.prepare('SELECT * FROM clips WHERE project_id = ? ORDER BY sort').all(id) as Row[]).map(toClip),
+    project,
+    characters,
+    clips,
     assets: (db.prepare('SELECT * FROM assets WHERE project_id = ? ORDER BY created_at').all(id) as Row[]).map(toAsset),
     jobs: (
       db
@@ -538,25 +559,56 @@ export interface ScriptScene {
   story: string
   narration: string
   durationMs: number
+  characterNames?: string[]
 }
 
 /**
  * Replaces all scenes with a freshly written script. Characters stay: the visual step reuses the ones
  * whose names come back, so their character sheets survive a rewrite.
  */
-export function replaceScript(projectId: string, title: string, scenes: ScriptScene[]): void {
+export function replaceScript(projectId: string, title: string, scenes: ScriptScene[], characters: { name: string; description: string }[]): void {
   const db = getDb()
   db.transaction(() => {
     const editor = getProject(projectId).editor
     if (editor.soundDesign) db.prepare('UPDATE projects SET editor_json=? WHERE id=?').run(JSON.stringify({ ...editor, soundDesign: { enabled: editor.soundDesign.enabled, cues: [] } }), projectId)
     db.prepare('DELETE FROM clips WHERE project_id = ?').run(projectId)
+    const cast = upsertCast(projectId, characters)
     const insert = db.prepare(
       `INSERT INTO clips (id, project_id, sort, title, story, narration, duration_ms, character_ids)
-       VALUES (?, ?, ?, ?, ?, ?, ?, '[]')`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    scenes.forEach((c, i) => insert.run(randomUUID(), projectId, i, c.title, c.story, c.narration, c.durationMs))
+    scenes.forEach((c, i) => insert.run(randomUUID(), projectId, i, c.title, c.story, c.narration, c.durationMs, JSON.stringify(castIds(cast, c.characterNames ?? []))))
     db.prepare("UPDATE projects SET title = ?, status = 'script', step = 2, updated_at = ? WHERE id = ?").run(title, Date.now(), projectId)
   })()
+}
+
+function castIds(byName: Map<string, string>, names: string[]): string[] {
+  return [...new Set(names.map((name) => byName.get(name.trim().toLowerCase())).filter((id): id is string => !!id))]
+}
+
+function upsertCast(projectId: string, characters: { name: string; description: string }[]): Map<string, string> {
+  const db = getDb()
+  const existing = charactersOf(projectId)
+  const byName = new Map(existing.map((c) => [c.name.trim().toLowerCase(), c.id]))
+  const undescribed = new Map(existing.filter((c) => !c.description.trim()).map((c) => [c.id, c]))
+  const complete = db.prepare("UPDATE characters SET description = ?, reference_prompt = CASE WHEN reference_prompt = '' THEN ? ELSE reference_prompt END WHERE id = ?")
+  let sort = (existing.at(-1)?.sort ?? -1) + 1
+  const insert = db.prepare(
+    'INSERT INTO characters (id, project_id, name, description, sort, reference_prompt) VALUES (?, ?, ?, ?, ?, ?)'
+  )
+  for (const c of characters) {
+    const key = c.name.trim().toLowerCase()
+    if (!key) continue
+    const known = byName.get(key)
+    if (known) {
+      if (c.description.trim() && undescribed.delete(known)) complete.run(c.description, makeReferencePrompt(c.name, c.description), known)
+      continue
+    }
+    const id = randomUUID()
+    insert.run(id, projectId, c.name.trim(), c.description, sort++, makeReferencePrompt(c.name, c.description))
+    byName.set(key, id)
+  }
+  return byName
 }
 
 export interface SceneVisual {
@@ -576,23 +628,7 @@ export interface SceneVisual {
 export function applyVisuals(projectId: string, characters: { name: string; description: string }[], scenes: SceneVisual[]): void {
   const db = getDb()
   db.transaction(() => {
-    const existing = db.prepare('SELECT id, name FROM characters WHERE project_id = ? ORDER BY sort').all(projectId) as Row[]
-    const byName = new Map<string, string>(existing.map((c) => [String(c.name).trim().toLowerCase(), c.id as string]))
-    let sort = existing.length
-    for (const c of characters) {
-      const key = c.name.trim().toLowerCase()
-      if (!key || byName.has(key)) continue
-      const id = randomUUID()
-      db.prepare('INSERT INTO characters (id, project_id, name, description, sort, reference_prompt) VALUES (?, ?, ?, ?, ?, ?)').run(
-        id,
-        projectId,
-        c.name.trim(),
-        c.description,
-        sort++,
-        makeReferencePrompt(c.name, c.description)
-      )
-      byName.set(key, id)
-    }
+    const byName = upsertCast(projectId, characters)
     const update = db.prepare(
       `UPDATE clips SET visual_prompt = @visualPrompt, visual_source = @visualSource, character_ids = @characterIds,
          camera_preset = @cameraPreset, motion_strength = @motionStrength, video_prompt = @videoPrompt, transition = @transition
@@ -600,7 +636,7 @@ export function applyVisuals(projectId: string, characters: { name: string; desc
     )
     for (const v of scenes) {
       const clip = getClip(v.clipId)
-      const ids = [...new Set(v.characterNames.map((n) => byName.get(n.trim().toLowerCase())).filter((x): x is string => !!x))]
+      const ids = castIds(byName, v.characterNames)
       update.run({ ...v, projectId, visualSource: visualSourceOf(clip), characterIds: JSON.stringify(ids) })
     }
     db.prepare(
@@ -624,11 +660,11 @@ export function getCharacter(id: string): Character {
 }
 
 export function charactersOf(projectId: string): Character[] {
-  return (getDb().prepare('SELECT * FROM characters WHERE project_id = ? ORDER BY sort').all(projectId) as Row[]).map(toCharacter)
+  return (getDb().prepare('SELECT * FROM characters WHERE project_id = ? ORDER BY sort, id').all(projectId) as Row[]).map(toCharacter)
 }
 
 export function clipsOf(projectId: string): Clip[] {
-  return (getDb().prepare('SELECT * FROM clips WHERE project_id = ? ORDER BY sort').all(projectId) as Row[]).map(toClip)
+  return (getDb().prepare('SELECT * FROM clips WHERE project_id = ? ORDER BY sort, id').all(projectId) as Row[]).map(toClip)
 }
 
 const CLIP_COLS: Partial<Record<keyof Clip, string>> = {

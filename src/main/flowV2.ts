@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname } from 'node:path'
-import { FLOW_IMAGE_LIMIT, FLOW_ZIP_LIMIT, type FlowImageChange, type FlowImportPreview, type FlowProjectV2 } from '@shared/flowV2'
+import { FLOW_IMAGE_LIMIT, FLOW_ZIP_LIMIT, clipFlowId, flowClipLabel, type FlowImageChange, type FlowImportPreview, type FlowProjectV2 } from '@shared/flowV2'
 import { getStyle } from '@shared/styles'
 import type { Asset, Clip, ImageFit } from '@shared/types'
 import { getDb } from './db'
@@ -12,11 +12,12 @@ import { assetAbsPath } from './paths'
 import { getAsset, getBundle, getCharacter, getClip, insertAsset, patchClip, touchProject } from './repo'
 import { makeZip, readZipArchive, type ZipEntry } from './zipArchive'
 
-const FILE_ID = /^[a-z0-9][a-z0-9_-]*$/
 const IMAGE_NAME = /\.(?:jpe?g|png|webp)$/i
 
 function flowManifest(projectId: string) {
   const { project, characters, clips } = getBundle(projectId)
+  const castIds = new Map(characters.map((c) => [c.id, c.flowId!]))
+  const sceneLabels = clips.map((c, i) => flowClipLabel(i, c.title))
   const manifest: FlowProjectV2 = {
     app: 'bang-story',
     formatVersion: 2,
@@ -26,20 +27,21 @@ function flowManifest(projectId: string) {
     visualStyle: getStyle(project.styleId).prompt,
     characters: characters.map((c) => {
       if (!c.referencePrompt.trim()) throw new Error(`Karakter ${c.name} belum punya prompt referensi. Isi dulu di dialog pemeran.`)
-      if (!FILE_ID.test(c.id)) throw new Error(`ID karakter ${c.name} tidak valid untuk Google Flow.`)
       return {
-        id: c.id, name: c.name, description: c.description, referencePrompt: c.referencePrompt.trim(),
-        referenceImage: (c.referenceImageAssetId ?? c.sheetAssetId) ? `characters/${c.id}-character-sheet.webp` : null
+        id: c.flowId!, name: c.name, description: c.description, referencePrompt: c.referencePrompt.trim(),
+        referenceImage: (c.referenceImageAssetId ?? c.sheetAssetId) ? `characters/${c.flowId}-character-sheet.webp` : null
       }
     }),
-    scenes: clips.map((c) => {
-      if (!FILE_ID.test(c.id)) throw new Error(`ID scene ${c.id} tidak valid untuk Google Flow.`)
-      if (c.characterIds.some((id) => !characters.some((char) => char.id === id)))
-        throw new Error(`Scene ${c.id} merujuk karakter yang sudah tidak ada. Perbaiki dulu.`)
-      return { id: c.id, title: c.title, narration: c.narration, visualPrompt: c.visualPrompt, characterIds: c.characterIds }
+    scenes: clips.map((c, i) => {
+      const characterIds = c.characterIds.map((id) => {
+        const flowId = castIds.get(id)
+        if (!flowId) throw new Error(`${sceneLabels[i]} merujuk karakter yang sudah tidak ada. Perbaiki dulu.`)
+        return flowId
+      })
+      return { id: c.flowId!, title: c.title, narration: c.narration, visualPrompt: c.visualPrompt, characterIds }
     })
   }
-  return { manifest, characters, emptyScenes: manifest.scenes.filter((c) => !c.characterIds.length).map((c) => c.id) }
+  return { manifest, characters, emptyScenes: sceneLabels.filter((_label, i) => !manifest.scenes[i].characterIds.length) }
 }
 
 export function flowExportSummary(projectId: string): string[] {
@@ -48,14 +50,14 @@ export function flowExportSummary(projectId: string): string[] {
 
 export async function buildFlowV2Zip(projectId: string, confirmed: boolean): Promise<{ fileName: string; zipBuffer: Buffer }> {
   const { manifest, characters, emptyScenes } = flowManifest(projectId)
-  if (emptyScenes.length && confirmed !== true) throw new Error(`Scene ${emptyScenes.join(', ')} tidak memakai karakter. Konfirmasi untuk lanjut.`)
+  if (emptyScenes.length && confirmed !== true) throw new Error(`${emptyScenes.join(', ')} tidak memakai karakter. Konfirmasi untuk lanjut.`)
   const entries: ZipEntry[] = [{ name: 'project.json', data: Buffer.from(JSON.stringify(manifest, null, 2)), compress: true }]
   let size = entries[0].data.length
   for (const record of manifest.characters) {
     if (!record.referenceImage) continue
-    const character = characters.find((c) => c.id === record.id)!
+    const character = characters.find((c) => c.flowId === record.id)!
     const asset = getAsset(character.referenceImageAssetId ?? character.sheetAssetId)
-    if (asset?.projectId !== projectId || asset.characterId !== record.id || asset.kind !== 'image')
+    if (asset?.projectId !== projectId || asset.characterId !== character.id || asset.kind !== 'image')
       throw new Error(`Gambar referensi ${record.name} tidak ditemukan. Unggah ulang di dialog pemeran.`)
     let data: Buffer
     try { data = readFileSync(assetAbsPath(projectId, asset.localPath)) } catch {
@@ -138,7 +140,7 @@ async function commitImages(projectId: string, selected: { clip: Clip; bytes: Bu
     const changes = decoded.map(({ clip, image }) => {
       const current = ownedClip(projectId, clip.id)
       if (current.importedImageAssetId !== clip.importedImageAssetId || current.imageFit !== clip.imageFit)
-        throw new Error(`Gambar scene ${clip.id} sudah berubah. Coba impor lagi.`)
+        throw new Error(`Gambar pada ${flowClipLabel(current.sort, current.title)} sudah berubah. Coba impor lagi.`)
       const asset = insertAsset({ projectId, clipId: clip.id, kind: 'image', provider: 'import', localPath: write(image.output), width: image.width, height: image.height })
       patchClip(clip.id, { importedImageAssetId: asset.id, imageFit: fit })
       return { clipId: clip.id, asset, imageFit: fit }
@@ -179,15 +181,20 @@ interface StagedZip {
 const stagedZips = new Map<string, StagedZip>()
 let previewsInProgress = 0
 
-export function matchFlowImages(clips: { id: string }[], names: string[]): (string | null)[] {
+export function matchFlowImages(clips: { id: string }[], names: string[]): Map<string, string> {
   const stems = names.map((name) => basename(name, extname(name)).toLowerCase())
-  const exact = clips.map((clip) => stems.flatMap((stem, index) => stem === clip.id ? [names[index]] : []))
-  const reserved = new Set(exact.flat())
-  return clips.map((_clip, index) => {
-    if (exact[index].length) return exact[index].length === 1 ? exact[index][0] : null
-    const byNumber = names.filter((name, i) => !reserved.has(name) && Number(/(\d+)$/.exec(stems[i])?.[1]) === index + 1)
-    return byNumber.length === 1 ? byNumber[0] : null
-  })
+  const shortIds = new Set(clips.map((_clip, i) => clipFlowId(i)))
+  const oldIds = new Set(clips.map((clip) => clip.id.toLowerCase()))
+  const matches = new Map<string, string>()
+  for (const [index, clip] of clips.entries()) {
+    const short = names.filter((_name, i) => stems[i] === clipFlowId(index))
+    const legacy = names.filter((_name, i) => !shortIds.has(stems[i]) && stems[i] === clip.id.toLowerCase())
+    const numeric = names.filter((_name, i) => !shortIds.has(stems[i]) && !oldIds.has(stems[i])
+      && !/^[0-9a-f-]{36}$/.test(stems[i]) && Number(/(\d+)$/.exec(stems[i])?.[1]) === index + 1)
+    const candidates = short.length ? short : legacy.length ? legacy : numeric
+    if (candidates.length === 1) matches.set(candidates[0], clip.id)
+  }
+  return matches
 }
 
 export async function previewFlowZip(projectId: string, input: unknown): Promise<FlowImportPreview> {
@@ -204,7 +211,7 @@ export async function previewFlowZip(projectId: string, input: unknown): Promise
       }
       try {
         const { output } = await decodeFlowImage(bytes, 'thumbnail')
-        images.push({ name, thumbnail: `data:image/jpeg;base64,${output.toString('base64')}` })
+        images.push({ name, thumbnail: `data:image/jpeg;base64,${output.toString('base64')}`, clipId: null })
       } catch {
         throw new Error(`Gambar “${name}” tidak valid atau melebihi batas 10 MB.`)
       }
@@ -223,7 +230,8 @@ export async function previewFlowZip(projectId: string, input: unknown): Promise
     const timer = setTimeout(() => stagedZips.delete(token), 30 * 60_000)
     timer.unref()
     const suggested = matchFlowImages(clips, images.map(i => i.name))
-    return { token, images, scenes: clips.map((c, i) => ({ id: c.id, title: c.title, image: suggested[i] })) }
+    return { token, images: images.map((image) => ({ ...image, clipId: suggested.get(image.name) ?? null })),
+      scenes: clips.map((c, i) => ({ id: c.id, label: flowClipLabel(i, c.title) })) }
   } finally {
     previewsInProgress--
   }

@@ -27,6 +27,19 @@ const SCRIPT_SCHEMA = {
   additionalProperties: false,
   properties: {
     title: { type: 'string', description: 'Short catchy video title in the target language, max 60 characters.' },
+    characters: {
+      type: 'array',
+      description: 'Every named story character mentioned anywhere in the script, including minor and one-scene characters. Exclude places, organizations and unnamed extras.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name: { type: 'string', description: 'The exact name used in the story and narration.' },
+          description: { type: 'string', description: 'Physical appearance and default outfit for the visual reference.' }
+        },
+        required: ['name', 'description']
+      }
+    },
     scenes: {
       type: 'array',
       items: {
@@ -38,22 +51,24 @@ const SCRIPT_SCHEMA = {
             type: 'string',
             description: 'What happens in this scene, one or two sentences in the target language, so the writer can check the plot.'
           },
+          characters: { type: 'array', items: { type: 'string' }, description: 'Exact roster names of all characters present in this scene, including one-scene characters. Empty for scenes with no named character present.' },
           narration: {
             type: 'string',
             description:
               'Voice-over in the target language, with the word budget requested in the prompt and natural spoken rhythm. May contain one or two English vocal tags in angle brackets.'
           }
         },
-        required: ['title', 'story', 'narration']
+        required: ['title', 'story', 'narration', 'characters']
       }
     }
   },
-  required: ['title', 'scenes']
+  required: ['title', 'characters', 'scenes']
 }
 
 interface ScriptPlan {
   title?: string
-  scenes?: { title?: string; story?: string; narration?: string }[]
+  characters?: { name?: string; description?: string }[]
+  scenes?: { title?: string; story?: string; narration?: string; characters?: string[] }[]
 }
 
 /** Writes the scene-by-scene script (story and voice-over) that the user reviews before any visuals exist. */
@@ -72,6 +87,7 @@ export async function generateScript(projectId: string, signal?: AbortSignal): P
     'The first scene delivers the title promise immediately. The story has a clear beginning, causal rising tension and a satisfying ending. Resolve the story before any optional audience question.',
     skillContext,
     'Keep facts accurate for history and science topics, and always call each character by the same name.',
+    'Before returning, check all scene titles, story text and narration against the characters roster. Include every named character even if their name occurs only once.',
     'The narration is voiced by an expressive text-to-speech model. Where it helps the delivery, add a few English vocal tags in angle brackets inside the narration, such as <short pause>, <long pause>, <chuckles>, <sigh>, <gasp> or <whispers>. Use them sparingly, at most one or two per scene, and never other markup.',
     `Write everything in ${lang}, except the vocal tags, which stay in English.`
   ].join(' ')
@@ -98,8 +114,13 @@ export async function generateScript(projectId: string, signal?: AbortSignal): P
       title: str(c.title) || `Adegan ${i + 1}`,
       story: str(c.story),
       narration: str(c.narration),
-      durationMs: estimateNarrationMs(str(c.narration))
-    }))
+      durationMs: estimateNarrationMs(str(c.narration)),
+      characterNames: (c.characters ?? []).map(str).filter(Boolean)
+    })),
+    [
+      ...(plan.characters ?? []).map((c) => ({ name: str(c.name), description: str(c.description) })),
+      ...scenes.flatMap((c) => (c.characters ?? []).map((name) => ({ name: str(name), description: '' })))
+    ]
   )
   return getBundle(projectId)
 }
@@ -117,7 +138,7 @@ const VISUAL_SCHEMA = {
     },
     characters: {
       type: 'array',
-      description: 'Every recurring character in the requested scenes, including the existing ones unchanged. Empty if there are none.',
+      description: 'Every named character in the requested scenes, including one-scene characters and existing ones. Empty if there are none.',
       items: {
         type: 'object',
         additionalProperties: false,
@@ -152,7 +173,7 @@ const VISUAL_SCHEMA = {
           action: {
             type: 'string',
             description:
-              'English: the ONE moment shown. Every visible person with role, age, pose and expression, what they are doing, and the concrete visual evidence of what the narration says. Recurring characters by name plus a short role ("Leo, the colony doctor").'
+              'English: the ONE moment shown. Every visible person with role, age, pose and expression, what they are doing, and the concrete visual evidence of what the narration says. Named characters by name plus a short role ("Leo, the colony doctor").'
           },
           wardrobe: {
             type: 'array',
@@ -166,7 +187,7 @@ const VISUAL_SCHEMA = {
                   type: 'string',
                   enum: ['reference', 'custom'],
                   description:
-                    'reference = the recurring character wears their default outfit as on the reference sheet; custom = a different outfit for this scene (always custom for extras).'
+                    'reference = the named character wears their default outfit as on the reference sheet; custom = a different outfit for this scene (always custom for extras).'
                 },
                 outfit: { type: 'string', description: 'English. For custom: the full outfit with colors. For reference: a few words naming it.' }
               },
@@ -179,7 +200,7 @@ const VISUAL_SCHEMA = {
             description:
               'English, comma-separated: 3 to 6 things an image model is likely to get wrong for THIS scene, e.g. "Earth landscape, aliens, green skin, spacesuits indoors, helmets".'
           },
-          characters: { type: 'array', items: { type: 'string' }, description: 'Names of recurring characters visible in the image.' },
+          characters: { type: 'array', items: { type: 'string' }, description: 'Exact names of every named character visible in the image, including minor and one-scene characters.' },
           camera: { type: 'string', enum: CAMERA_IDS, description: 'Camera move over the still image that fits the scene mood.' },
           strength: {
             type: 'string',
@@ -276,8 +297,8 @@ export async function generateVisuals(projectId: string, mode: 'missing' | 'all'
     '1. Every scene is self-contained. Always name the world (planet or country, era, technology) in the setting, even when the story makes it obvious, and add background details that prove it. Without this the model falls back to present-day Earth.',
     '2. Turn narration into a literal, showable moment. When the narration is a general statement ("after generations, children grow taller"), invent one concrete situation that shows it with visible evidence (a height chart, a comparison with an adult, an old photo), never a symbol or a vague mood.',
     '3. Describe people plainly as humans. Do not use words an image model may read literally or as fantasy, such as Martian, alien, native, creature, mutant, hybrid or "-born", unless they really are not human; describe the difference concretely instead ("a human teenager, about 2.1 m tall, very slender, long limbs, normal human face").',
-    '4. Clothing must suit the place and action: no spacesuits or helmets inside a pressurized room, a spacesuit outside on an airless surface, period clothing for history. A recurring character keeps their default outfit (source "reference") unless the scene needs something else; then use "custom" and describe the new outfit in full. Describe the clothing of every extra too.',
-    '5. Keep every recurring character visually consistent: reuse the existing characters exactly as given (same name, identity and outfit) and only add characters that are missing. Characters are only people who appear in several scenes; one-off people are extras described inside the scene.',
+    '4. Clothing must suit the place and action: no spacesuits or helmets inside a pressurized room, a spacesuit outside on an airless surface, period clothing for history. A named character keeps their default outfit (source "reference") unless the scene needs something else; then use "custom" and describe the new outfit in full. Describe the clothing of every extra too.',
+    '5. Keep every named character visually consistent. Reuse existing names, identities and outfits, fill in missing descriptions, and add any missing named characters, even if they appear only once. Only unnamed people are extras.',
     '6. No readable text, signs, captions or labels in the image. Vary shot sizes, angles and camera moves across scenes so the video never feels repetitive.',
     'Write "world", "identity", "outfit", "setting", "action", "wardrobe", "framing", "avoid" and "motion" in English.'
   ].join('\n')

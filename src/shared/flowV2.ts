@@ -17,8 +17,8 @@ export interface FlowProjectV2 {
 
 export interface FlowImportPreview {
   token: string
-  images: { name: string; thumbnail: string }[]
-  scenes: { id: string; title: string; image: string | null }[]
+  images: { name: string; thumbnail: string; clipId: string | null }[]
+  scenes: { id: string; label: string }[]
 }
 
 export interface FlowImageChange {
@@ -36,6 +36,26 @@ export interface FlowImageApi {
   changeImage(projectId: string, clipId: string, fit: ImageFit | null): Promise<FlowImageChange>
   previewZip(projectId: string, bytes: ArrayBuffer): Promise<FlowImportPreview>
   applyZip(projectId: string, token: string, mapping: { clipId: string; image: string }[], fit: ImageFit): Promise<FlowImageChange[]>
+}
+
+export function characterFlowIds(characters: { name: string }[]): string[] {
+  const used = new Set<string>()
+  return characters.map(({ name }) => {
+    const base = name.normalize('NFKD').toLowerCase().replace(/\p{M}/gu, '')
+      .replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'pemeran'
+    let id = base
+    for (let suffix = 2; used.has(id); suffix++) id = `${base}-${suffix}`
+    used.add(id)
+    return id
+  })
+}
+
+export function clipFlowId(index: number): string {
+  return `klip-${String(index + 1).padStart(2, '0')}`
+}
+
+export function flowClipLabel(index: number, title: string): string {
+  return `Klip ${clipFlowId(index).slice(5)} — ${title.trim() || 'Tanpa judul'}`
 }
 
 export function sceneImageId(clip: Pick<Clip, 'importedImageAssetId' | 'imageAssetId'>): string | null {

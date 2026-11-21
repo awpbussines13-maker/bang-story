@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FLOW_IMAGE_ACCEPT, FLOW_IMAGE_LIMIT, FLOW_ZIP_LIMIT, type FlowImageChange, type FlowImportPreview } from '@shared/flowV2'
+import { FLOW_IMAGE_ACCEPT, FLOW_IMAGE_LIMIT, FLOW_ZIP_LIMIT, sceneImageId, type FlowImageChange, type FlowImportPreview } from '@shared/flowV2'
 import type { ImageFit } from '@shared/types'
 import { Select } from '../../components/Select'
 import { Button, Modal, Segmented, confirmDialog, inputCls } from '../../components/ui'
@@ -19,7 +19,7 @@ export async function exportForFlow(projectId: string): Promise<void> {
   const empty = await window.api.flowImages.exportSummary(projectId)
   if (empty.length && !await confirmDialog({
     title: 'Ekspor untuk Google Flow',
-    body: `Scene ${empty.join(', ')} tidak memakai karakter — lanjutkan?`,
+    body: `${empty.join(', ')} tidak memakai karakter. Lanjutkan?`,
     confirm: 'Lanjutkan', cancel: 'Batal'
   })) return
   await window.api.flowImages.exportZip(projectId, empty.length > 0)
@@ -95,13 +95,11 @@ export function ZipImageImport({ projectId, onClose, onMissing }: {
 }) {
   const [preview, setPreview] = useState<FlowImportPreview | null>(null)
   const [mapping, setMapping] = useState<Record<string, string>>({})
-  const [remaining, setRemaining] = useState<FlowImportPreview['scenes'] | null>(null)
+  const [result, setResult] = useState<{ applied: number; remaining: FlowImportPreview['scenes'] } | null>(null)
   const [fit, setFit] = useState<ImageFit>('cover')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const selected = Object.entries(mapping).filter(([, image]) => image)
-  const assigned = new Set(selected.map(([, image]) => image))
-  const imported = useProject((s) => s.clips.filter((c) => c.importedImageAssetId).length)
+  const selected = Object.entries(mapping).filter(([, clipId]) => clipId)
 
   async function inspect(file: File) {
     setBusy(true)
@@ -111,7 +109,7 @@ export function ZipImageImport({ projectId, onClose, onMissing }: {
       if (!file.size || file.size > FLOW_ZIP_LIMIT) throw new Error('Ukuran ZIP maksimal 96 MB.')
       await flushFlowProject(projectId)
       const next = await window.api.flowImages.previewZip(projectId, await file.arrayBuffer())
-      setMapping(Object.fromEntries(next.scenes.map((s) => [s.id, s.image ?? ''])))
+      setMapping(Object.fromEntries(next.images.map((image) => [image.name, image.clipId ?? ''])))
       setPreview(next)
     } catch (e) { setError(errorText(e)) }
     finally { setBusy(false) }
@@ -123,22 +121,22 @@ export function ZipImageImport({ projectId, onClose, onMissing }: {
     setError('')
     try {
       await flushFlowProject(projectId)
-      const changes = await window.api.flowImages.applyZip(projectId, preview.token, selected.map(([clipId, image]) => ({ clipId, image })), fit)
+      const changes = await window.api.flowImages.applyZip(projectId, preview.token, selected.map(([image, clipId]) => ({ clipId, image })), fit)
       for (const change of changes) applyImageChange(projectId, change)
-      const missing = new Set(useProject.getState().clips.filter((c) => !c.importedImageAssetId).map((c) => c.id))
-      setRemaining(preview.scenes.filter((s) => missing.has(s.id)))
+      const missing = new Set(useProject.getState().clips.filter((c) => !sceneImageId(c)).map((c) => c.id))
+      setResult({ applied: changes.length, remaining: preview.scenes.filter((s) => missing.has(s.id)) })
     } catch (e) { setError(errorText(e)) }
     finally { setBusy(false) }
   }
 
   return (
     <Modal open width={820} title="Impor gambar dari ZIP" onClose={() => { if (!busy) onClose() }}>
-      {remaining && preview ? (
+      {result && preview ? (
         <>
-          <p role="status">{imported} dari {preview.scenes.length} scene mendapat gambar{remaining.length ? ' — masih perlu gambar:' : '.'}</p>
-          {remaining.map((scene) => (
+          <p role="status">{result.applied} dari {preview.scenes.length} klip mendapat gambar{result.remaining.length ? ' — masih perlu gambar:' : '.'}</p>
+          {result.remaining.map((scene) => (
             <div key={scene.id} className="flex items-center justify-between gap-2">
-              <span className="text-sm break-all">{scene.title || 'Tanpa judul'} · {scene.id}</span>
+              <span className="text-sm break-all">{scene.label}</span>
               <Button size="sm" onClick={() => onMissing(scene.id)}>Impor gambar</Button>
             </div>
           ))}
@@ -154,37 +152,29 @@ export function ZipImageImport({ projectId, onClose, onMissing }: {
           {preview && (
             <>
               <table className="w-full table-fixed text-left text-sm">
-                <thead><tr><th className="w-[34%] pb-2">Scene</th><th className="pb-2">File gambar</th><th className="w-[78px] pb-2">Pratinjau</th></tr></thead>
+                <thead><tr><th className="w-[78px] pb-2">Gambar</th><th className="w-[37%] pb-2">Nama file</th><th className="pb-2">Klip tujuan</th></tr></thead>
                 <tbody>
-                  {preview.scenes.map((scene, i) => {
-                    const image = preview.images.find((image) => image.name === mapping[scene.id])
-                    return (
-                      <tr key={scene.id} className="border-t border-line">
-                        <th scope="row" className="py-2 pr-2 font-medium">
-                          {i + 1}. {scene.title || 'Tanpa judul'} <span className="block break-all text-xs text-muted">{scene.id}</span>
-                        </th>
-                        <td className="py-2 pr-2">
-                          <Select label={`Gambar scene ${i + 1}`} size="sm" value={mapping[scene.id] ?? ''} disabled={busy}
-                            options={[{ value: '', label: 'Tanpa gambar' }, ...preview.images.map(({ name }) => ({ value: name, label: name }))]}
-                            onChange={(name) => setMapping((previous) => ({
-                              ...Object.fromEntries(Object.entries(previous).map(([id, current]) => [id, name && current === name ? '' : current])),
-                              [scene.id]: name
-                            }))} />
-                        </td>
-                        <td>{image && <img alt={image.name} src={image.thumbnail} className="h-12 w-[74px] rounded bg-sand object-contain" />}</td>
-                      </tr>
-                    )
-                  })}
+                  {preview.images.map((image) => (
+                    <tr key={image.name} className="border-t border-line">
+                      <td className="py-2 pr-2"><img alt="" src={image.thumbnail} className="h-12 w-full rounded bg-sand object-contain" /></td>
+                      <th scope="row" className="break-all py-2 pr-2 font-medium">
+                        {image.name}
+                        {!mapping[image.name] && <span className="mt-1 block text-xs text-sun-ink">
+                          {image.clipId ? 'Tidak dipetakan' : 'Belum cocok otomatis'}
+                        </span>}
+                      </th>
+                      <td className="py-2">
+                        <Select label={`Klip tujuan untuk ${image.name}`} size="sm" value={mapping[image.name] ?? ''} disabled={busy}
+                          options={[{ value: '', label: 'Lewati file' }, ...preview.scenes.map((scene) => ({ value: scene.id, label: scene.label }))]}
+                          onChange={(clipId) => setMapping((previous) => ({
+                            ...Object.fromEntries(Object.entries(previous).map(([name, current]) => [name, clipId && current === clipId ? '' : current])),
+                            [image.name]: clipId
+                          }))} />
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-              {preview.images.some(({ name }) => !assigned.has(name)) && (
-                <details className="text-sm" open>
-                  <summary>Gambar belum terpetakan</summary>
-                  <ul className="mt-2 list-inside list-disc break-all">
-                    {preview.images.filter(({ name }) => !assigned.has(name)).map(({ name }) => <li key={name}>{name}</li>)}
-                  </ul>
-                </details>
-              )}
               <ImageFraming fit={fit} onChange={setFit} disabled={busy} />
             </>
           )}
@@ -192,8 +182,8 @@ export function ZipImageImport({ projectId, onClose, onMissing }: {
       )}
       {error && <p role="alert" className="text-sm text-bad-ink">{error}</p>}
       <div className="flex justify-end gap-2">
-        <Button onClick={onClose} disabled={busy}>{remaining ? 'Selesai' : 'Batal'}</Button>
-        {preview && !remaining && <Button variant="primary" loading={busy} disabled={busy || !selected.length} onClick={() => void apply()}>Terapkan</Button>}
+        <Button onClick={onClose} disabled={busy}>{result ? 'Selesai' : 'Batal'}</Button>
+        {preview && !result && <Button variant="primary" loading={busy} disabled={busy || !selected.length} onClick={() => void apply()}>Terapkan</Button>}
       </div>
     </Modal>
   )

@@ -183,6 +183,10 @@ const MIGRATIONS: string[] = [
   ALTER TABLE characters ADD COLUMN reference_image_asset_id TEXT;
   ALTER TABLE clips ADD COLUMN imported_image_asset_id TEXT;
   ALTER TABLE clips ADD COLUMN image_fit TEXT NOT NULL DEFAULT 'cover';
+  `,
+  `
+  ALTER TABLE characters ADD COLUMN flow_id TEXT;
+  ALTER TABLE clips ADD COLUMN flow_id TEXT;
   `
 ]
 
