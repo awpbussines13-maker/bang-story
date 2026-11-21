@@ -12,13 +12,22 @@ import {
   Image as ImageIcon,
   Info,
   KeyRound,
+  LogOut,
   Mic,
   SlidersHorizontal,
   Server,
   Trash2
 } from 'lucide-react'
 import { HF_IMAGE_MODELS, HF_VIDEO_MODELS } from '@shared/higgsfield'
-import { LANGUAGES, LLM_PROVIDERS } from '@shared/models'
+import {
+  DEFAULT_NINE_ROUTER_IMAGE_CONCURRENCY,
+  DEFAULT_NINE_ROUTER_IMAGE_MODEL,
+  LANGUAGES,
+  LLM_PROVIDERS,
+  MAX_NINE_ROUTER_IMAGE_CONCURRENCY,
+  MIN_NINE_ROUTER_IMAGE_CONCURRENCY,
+  normalizeNineRouterImageConcurrency
+} from '@shared/models'
 import type { ApiProvider, AppSettings, KeyStatus, KeyTestResult, LlmProvider, TtsProvider } from '@shared/types'
 import { Logo } from '../components/Logo'
 import { ModelPicker } from '../components/ModelPicker'
@@ -26,12 +35,26 @@ import { ProviderLogo, type ProviderLogoId } from '../components/ProviderLogo'
 import { Select } from '../components/Select'
 import { AboutSection } from './AboutSection'
 import { WhisperSection } from './WhisperSection'
-import { Badge, Button, Field, IconButton, Segmented, confirmDialog, cx, inputCls } from '../components/ui'
+import { Badge, Button, Field, IconButton, Segmented, Switch, confirmDialog, cx, inputCls } from '../components/ui'
 import { errorText, relativeTime } from '../lib/format'
 import { useModels } from '../lib/useModels'
 import { useApp } from '../store/app'
 
-type Tab = 'services' | '9router' | 'general' | 'about'
+type Tab = 'services' | '9router' | 'general' | 'agent' | 'about'
+
+const BANG_STORY_MCP_URL = 'https://story.yahya.web.id/mcp'
+const CODEX_MCP_CONFIG = `[mcp_servers.bang_story]
+url = "${BANG_STORY_MCP_URL}"
+bearer_token_env_var = "BANG_STORY_MCP_TOKEN"`
+const MCP_AGENT_SETUP_PROMPT = `Pasang MCP Bang Story untuk agent ini.
+
+Transport: Streamable HTTP
+URL: ${BANG_STORY_MCP_URL}
+Header: Authorization: Bearer <BANG_STORY_MCP_TOKEN>
+
+Ambil nilai MCP_TOKEN dari secret store privat server, lalu simpan di client ini sebagai environment lokal BANG_STORY_MCP_TOKEN. Jangan minta saya mengirim token di chat. Jangan tulis token ke repo, prompt, atau log. Jika token belum tersedia, beri tahu saya cara menambahkannya ke secret store client ini.
+
+Gunakan format konfigurasi resmi client ini dan simpan koneksi di konfigurasi user, bukan konfigurasi bersama proyek. Setelah tersambung, panggil project.options untuk tes, lalu baca bang-story://capabilities dan workflow pembuatan video. Jangan mulai generasi berbayar tanpa persetujuan eksplisit; cek generation.estimate sebelum generasi gambar atau video.`
 
 interface ProviderOption<T extends string> {
   id: T
@@ -550,7 +573,7 @@ function HiggsfieldSection({
 }) {
   return (
     <>
-      <SectionTitle icon={<ImageIcon className="size-5" />} title="Gambar dan video" sub="Higgsfield membuat gambar klip, lembar karakter, dan video AI." />
+      <SectionTitle icon={<ImageIcon className="size-5" />} title="Gambar dan video" sub="Pilih penyedia gambar klip dan lembar karakter. Video AI memakai Higgsfield." />
       <Card>
         <div className="flex items-center justify-between border-b border-dashed border-line pb-3">
           <div className="flex flex-col">
@@ -560,18 +583,24 @@ function HiggsfieldSection({
           <Segmented
             size="sm"
             value={settings.imageProvider || 'higgsfield'}
-            onChange={async (v) => onSettings(await window.api.settings.set({ imageProvider: v as any }))}
+            onChange={async (v) => onSettings(await window.api.settings.set({ imageProvider: v as AppSettings['imageProvider'] }))}
             options={[
               { id: 'higgsfield', label: 'Higgsfield' },
               { id: '9router', label: '9Router' }
             ]}
           />
         </div>
+        {settings.imageProvider === '9router' && (
+          <p className="text-[13px] text-ink-2">
+            Gambar klip dan lembar karakter memakai <strong>9Router</strong> · {settings.nineRouterImageModel || DEFAULT_NINE_ROUTER_IMAGE_MODEL}.
+            Atur modelnya di tab 9Router. Kunci Higgsfield di bawah hanya diperlukan untuk Video AI atau proyek yang memilih Higgsfield.
+          </p>
+        )}
         <div className="flex items-center gap-3">
           <ProviderLogo id="higgsfield" />
           <div className="flex flex-1 flex-col">
             <span className="text-base font-bold">Higgsfield</span>
-            <span className="text-[13px] text-ink-2">GPT Image 2.5, Kling, Seedance, dan model lain dari akun Higgsfield kamu</span>
+            <span className="text-[13px] text-ink-2">{settings.imageProvider === '9router' ? 'Untuk Video AI; gambar saat ini memakai 9Router' : 'GPT Image 2.5, Kling, Seedance, dan model lain dari akun Higgsfield kamu'}</span>
           </div>
           <StatusBadge status={status} />
         </div>
@@ -595,8 +624,12 @@ function HiggsfieldSection({
         <p className="flex items-start gap-2.5 border-t border-dashed border-line pt-4 text-[13px] leading-relaxed text-ink-2">
           <Film className="mt-0.5 size-4 shrink-0" />
           <span>
-            Semua {HF_IMAGE_MODELS.length} model gambar dan {HF_VIDEO_MODELS.length} model video Higgsfield bisa dipakai. Modelnya dipilih per proyek
-            di langkah <strong className="text-ink">Ide cerita</strong>, bagian Model AI.
+            {settings.imageProvider === '9router' ? (
+              <>{HF_VIDEO_MODELS.length} model video Higgsfield tersedia di bagian Model AI proyek. Model gambar dan lembar karakter mengikuti pengaturan 9Router.</>
+            ) : (
+              <>Semua {HF_IMAGE_MODELS.length} model gambar dan {HF_VIDEO_MODELS.length} model video Higgsfield bisa dipakai. Modelnya dipilih per proyek
+              di langkah <strong className="text-ink">Ide cerita</strong>, bagian Model AI.</>
+            )}
           </span>
         </p>
       </Card>
@@ -627,6 +660,7 @@ function NineRouterSection({
 
   const llmModels = useModels('9router', ready)
   const ttsModels = useModels('9router-tts', ready)
+  const imageModels = useModels('9router-image', ready, settings.nineRouterBaseUrl)
 
   const save = async (): Promise<void> => {
     setBusy('save')
@@ -835,7 +869,7 @@ function NineRouterSection({
             <div className="flex flex-col gap-1.5 border-t border-dashed border-line pt-3">
               <span className="text-sm font-semibold">Model Suara TTS 9Router</span>
               <ModelPicker
-                value={settings.nineRouterTtsModel || 'gemini/gemini-3.1-flash-tts-preview'}
+                value={settings.nineRouterTtsModel || 'gemini/gemini-3.8-flash-tts'}
                 models={ttsModels.models}
                 loading={ttsModels.loading}
                 error={ttsModels.error}
@@ -862,11 +896,11 @@ function NineRouterSection({
               </div>
               <Button
                 variant={isImageActive ? 'primary' : 'secondary'}
+                disabled={isImageActive}
                 size="sm"
                 onClick={async () => {
-                  const target = isImageActive ? 'higgsfield' : '9router'
-                  onSettings(await window.api.settings.set({ imageProvider: target }))
-                  toast('success', `Pembuat gambar dialihkan ke ${target === '9router' ? '9Router' : 'Higgsfield'}`)
+                  onSettings(await window.api.settings.set({ imageProvider: '9router' }))
+                  toast('success', 'Pembuat gambar dialihkan ke 9Router')
                 }}
               >
                 {isImageActive ? 'Sedang Aktif di 9Router' : 'Aktifkan 9Router'}
@@ -875,18 +909,45 @@ function NineRouterSection({
 
             <div className="flex flex-col gap-2 border-t border-dashed border-line pt-3">
               <Field label="Model Gambar 9Router">
-                <input
-                  value={settings.nineRouterImageModel || 'ag/gemini-3.1-flash-image'}
-                  onChange={async (e) => {
-                    onSettings(await window.api.settings.set({ nineRouterImageModel: e.target.value }))
+                <ModelPicker
+                  value={settings.nineRouterImageModel || DEFAULT_NINE_ROUTER_IMAGE_MODEL}
+                  models={imageModels.models}
+                  loading={imageModels.loading}
+                  error={imageModels.error}
+                  fetchedAt={imageModels.fetchedAt}
+                  allowCustom
+                  onChange={async (id) => {
+                    onSettings(await window.api.settings.set({ nineRouterImageModel: id }))
+                    toast('success', `Model gambar 9Router diubah ke ${id}`)
                   }}
-                  placeholder="ag/gemini-3.1-flash-image"
-                  className={cx(inputCls, 'h-10 font-mono text-sm')}
+                  onRefresh={() => void imageModels.refresh()}
                 />
               </Field>
               <p className="text-xs text-ink-2">
-                Contoh: <code className="rounded bg-sand px-1 font-mono text-xs">ag/gemini-3.1-flash-image</code>,{' '}
-                <code className="rounded bg-sand px-1 font-mono text-xs">dall-e-3</code>, atau model image di 9Router kamu.
+                Pilih model gambar dari daftar 9Router, atau cari dengan mengetik ID model custom.
+              </p>
+              <Field label="Jumlah gambar 9Router yang berjalan bersamaan">
+                <input
+                  type="number"
+                  min={MIN_NINE_ROUTER_IMAGE_CONCURRENCY}
+                  max={MAX_NINE_ROUTER_IMAGE_CONCURRENCY}
+                  step={1}
+                  value={settings.nineRouterImageConcurrency || DEFAULT_NINE_ROUTER_IMAGE_CONCURRENCY}
+                  onChange={async (e) => {
+                    const value = e.currentTarget.valueAsNumber
+                    if (!Number.isFinite(value)) return
+                    onSettings(
+                      await window.api.settings.set({
+                        nineRouterImageConcurrency: normalizeNineRouterImageConcurrency(value)
+                      })
+                    )
+                  }}
+                  className={cx(inputCls, 'h-10 w-28 font-mono text-sm')}
+                />
+              </Field>
+              <p className="text-xs text-ink-2">
+                Atur antara {MIN_NINE_ROUTER_IMAGE_CONCURRENCY}–{MAX_NINE_ROUTER_IMAGE_CONCURRENCY}. Aktifkan strategi
+                Round Robin di 9Router supaya request terbagi merata ke akun Cloudflare kamu.
               </p>
             </div>
           </Card>
@@ -898,11 +959,22 @@ function NineRouterSection({
 
 export function Settings() {
   const { go, route } = useApp()
+  const { toast } = useApp()
+  const isWeb = window.location.protocol === 'http:' || window.location.protocol === 'https:'
   const back = route.name === 'settings' && route.back ? route.back : ({ name: 'home' } as const)
   const [tab, setTab] = useState<Tab>('services')
   const [keys, setKeys] = useState<KeyStatus[]>([])
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [folder, setFolder] = useState('')
+
+  const copyAgentText = async (text: string, label: string): Promise<void> => {
+    try {
+      await window.api.app.copyText(text)
+      toast('success', `${label} disalin.`)
+    } catch {
+      toast('error', 'Gagal menyalin. Pilih teks lalu salin manual.')
+    }
+  }
 
   const reload = (): void => {
     void window.api.settings.keys().then(setKeys)
@@ -919,6 +991,7 @@ export function Settings() {
     { id: 'services', label: 'Layanan AI dan kunci', icon: <KeyRound className="size-[18px]" /> },
     { id: '9router', label: '9Router', icon: <Server className="size-[18px]" /> },
     { id: 'general', label: 'Umum', icon: <SlidersHorizontal className="size-[18px]" /> },
+    { id: 'agent', label: 'Akses agent (MCP)', icon: <Server className="size-[18px]" /> },
     { id: 'about', label: 'Tentang aplikasi', icon: <Info className="size-[18px]" /> }
   ]
 
@@ -932,9 +1005,29 @@ export function Settings() {
           <span className="text-xl text-line-3">/</span>
           <span className="font-semibold text-sm sm:text-base">Pengaturan</span>
         </div>
-        <Button icon={<ArrowLeft className="size-[18px]" />} onClick={() => go(back)}>
-          {back.name === 'project' ? 'Kembali ke proyek' : 'Kembali ke beranda'}
-        </Button>
+        <div className="flex items-center gap-2">
+          {isWeb && (
+            <Button
+              variant="ghost"
+              icon={<LogOut className="size-[18px]" />}
+              onClick={async () => {
+                try {
+                  const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' })
+                  if (!response.ok) throw new Error('Logout gagal.')
+                  window.dispatchEvent(new Event('bang-story-logout'))
+                  window.location.reload()
+                } catch (error) {
+                  toast('error', error instanceof Error ? error.message : 'Logout gagal.')
+                }
+              }}
+            >
+              Keluar
+            </Button>
+          )}
+          <Button icon={<ArrowLeft className="size-[18px]" />} onClick={() => go(back)}>
+            {back.name === 'project' ? 'Kembali ke proyek' : 'Kembali ke beranda'}
+          </Button>
+        </div>
       </header>
       <div className="flex flex-col md:grid min-h-0 flex-1 md:grid-cols-[280px_minmax(0,1fr)]">
         <nav aria-label="Bagian pengaturan" className="flex shrink-0 flex-row overflow-x-auto gap-2 border-b md:border-b-0 md:border-r border-line p-3 md:flex-col md:pl-6 md:pr-4 md:pt-7">
@@ -980,9 +1073,20 @@ export function Settings() {
               <>
                 <div>
                   <h1 className="font-display text-[34px] font-bold tracking-[-0.015em]">Umum</h1>
-                  <p className="mt-2 text-[15px] text-ink-2">Pilihan bawaan untuk proyek baru.</p>
+                  <p className="mt-2 text-[15px] text-ink-2">Pengaturan aplikasi dan pilihan bawaan proyek baru.</p>
                 </div>
                 <section className="flex flex-col gap-5 rounded-2xl border border-line bg-surface p-6">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="font-semibold">Pemeriksaan gambar otomatis</h2>
+                      <p className="mt-1 text-sm leading-6 text-muted">Berlaku untuk semua proyek. Saat aktif, maksimal tiga percobaan per adegan; berhenti lebih awal jika lolos. Jika semua belum sesuai, hasil terbaik dipilih untuk kamu tinjau manual. Mengulang job tidak menambah jatah selama adegan dan referensi sama.</p>
+                      <p className="mt-1 text-sm leading-6 text-muted">Saat nonaktif, buat satu gambar tanpa pemeriksaan AI atau perbaikan otomatis. Kamu bisa meninjau manual dan tetap mengekspor.</p>
+                    </div>
+                    <Switch label="Pemeriksaan gambar otomatis" on={settings.imageReviewEnabled} onChange={async imageReviewEnabled => {
+                      try { setSettings(await window.api.settings.set({ imageReviewEnabled })) }
+                      catch (e) { toast('error', errorText(e)) }
+                    }} />
+                  </div>
                   <Field label="Bahasa default naskah dan suara">
                     <Select
                       label="Bahasa default naskah dan suara"
@@ -1009,6 +1113,67 @@ export function Settings() {
                       </Button>
                     </div>
                   </Field>
+                </section>
+              </>
+            )}
+
+            {tab === 'agent' && (
+              <>
+                <div>
+                  <h1 className="font-display text-[34px] font-bold tracking-[-0.015em]">Akses agent lewat MCP</h1>
+                  <p className="mt-2 max-w-[700px] text-[15px] text-ink-2">
+                    Sambungkan Codex atau agent lain agar bisa memakai tool Bang Story tanpa membaca source code.
+                  </p>
+                </div>
+
+                <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5 sm:p-6">
+                  <div>
+                    <h2 className="font-semibold">Alamat server</h2>
+                    <p className="mt-1 text-sm text-ink-2">Transport: Streamable HTTP</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className="min-w-0 flex-1 break-all rounded-xl bg-sand px-3 py-3 text-sm">{BANG_STORY_MCP_URL}</code>
+                    <Button variant="ghost" onClick={() => void copyAgentText(BANG_STORY_MCP_URL, 'Alamat MCP')}>
+                      Salin alamat
+                    </Button>
+                  </div>
+                  <p className="text-sm text-ink-2">
+                    Header autentikasi: <code>Authorization: Bearer &lt;MCP_TOKEN&gt;</code>. Token berbeda dari password situs; ambil
+                    <code> MCP_TOKEN</code> dari secret server dan simpan di secret store atau environment agent. Jangan tempel token ke chat,
+                    prompt, atau repo.
+                  </p>
+                </section>
+
+                <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5 sm:p-6">
+                  <div>
+                    <h2 className="font-semibold">Konfigurasi Codex CLI</h2>
+                    <p className="mt-1 text-sm text-ink-2">
+                      Simpan token sebagai <code>BANG_STORY_MCP_TOKEN</code>, lalu tambahkan blok ini ke <code>~/.codex/config.toml</code>.
+                      Mulai ulang Codex setelah menyimpan.
+                    </p>
+                  </div>
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-xl bg-sand p-4 font-mono text-sm">{CODEX_MCP_CONFIG}</pre>
+                  <div>
+                    <Button variant="ghost" onClick={() => void copyAgentText(CODEX_MCP_CONFIG, 'Konfigurasi Codex')}>
+                      Salin konfigurasi
+                    </Button>
+                  </div>
+                  <p className="text-sm text-ink-2">
+                    Jalankan <code>codex mcp list</code> untuk memastikan server tercatat. Konfigurasi MCP Codex CLI juga dipakai IDE Codex.
+                  </p>
+                </section>
+
+                <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5 sm:p-6">
+                  <div>
+                    <h2 className="font-semibold">Prompt pemasangan untuk agent lain</h2>
+                    <p className="mt-1 text-sm text-ink-2">Salin prompt ini, lalu tempel ke agent yang mendukung MCP.</p>
+                  </div>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-sand p-4 text-sm leading-relaxed">{MCP_AGENT_SETUP_PROMPT}</pre>
+                  <div>
+                    <Button onClick={() => void copyAgentText(MCP_AGENT_SETUP_PROMPT, 'Prompt pemasangan')}>
+                      Salin prompt
+                    </Button>
+                  </div>
                 </section>
               </>
             )}

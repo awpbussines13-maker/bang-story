@@ -1,9 +1,10 @@
 import type { Job } from '@shared/types'
+import { getSettings } from './settings'
 import { emit } from './events'
 import { getJobRaw, updateJob } from './repo'
 import { cancelRequest } from './services/higgsfield'
 
-export type QueueName = 'higgsfield' | 'tts' | 'whisper' | 'export'
+export type QueueName = 'higgsfield' | '9router-image' | 'story' | 'tts' | 'whisper' | 'export' | 'review' | 'audio'
 
 export interface TaskCtx {
   jobId: string
@@ -16,13 +17,34 @@ export interface TaskCtx {
 export type Task = (ctx: TaskCtx) => Promise<string | void | { message: string }>
 
 // Whisper uses most CPU cores by itself, so it runs one file at a time.
-const LIMITS: Record<QueueName, number> = { higgsfield: 3, tts: 2, whisper: 1, export: 1 }
-const running: Record<QueueName, number> = { higgsfield: 0, tts: 0, whisper: 0, export: 0 }
-const waiting: Record<QueueName, (() => void)[]> = { higgsfield: [], tts: [], whisper: [], export: [] }
+const FIXED_LIMITS: Record<Exclude<QueueName, '9router-image'>, number> = {
+  higgsfield: 3,
+  story: 1,
+  tts: 2,
+  whisper: 1,
+  export: 1,
+  review: 1,
+  audio: 1
+}
+const running: Record<QueueName, number> = { higgsfield: 0, '9router-image': 0, story: 0, tts: 0, whisper: 0, export: 0, review: 0, audio: 0 }
+const waiting: Record<QueueName, (() => void)[]> = {
+  higgsfield: [],
+  '9router-image': [],
+  story: [],
+  tts: [],
+  whisper: [],
+  export: [],
+  review: [],
+  audio: []
+}
 const controllers = new Map<string, AbortController>()
 
+function queueLimit(q: QueueName): number {
+  return q === '9router-image' ? getSettings().nineRouterImageConcurrency : FIXED_LIMITS[q]
+}
+
 function acquire(q: QueueName): Promise<void> {
-  if (running[q] < LIMITS[q]) {
+  if (running[q] < queueLimit(q)) {
     running[q]++
     return Promise.resolve()
   }
@@ -36,7 +58,7 @@ function acquire(q: QueueName): Promise<void> {
 
 function release(q: QueueName): void {
   running[q]--
-  waiting[q].shift()?.()
+  while (waiting[q].length && running[q] < queueLimit(q)) waiting[q].shift()?.()
 }
 
 export function runJob(job: Job, queue: QueueName, task: Task): Job {
@@ -69,6 +91,10 @@ export function runJob(job: Job, queue: QueueName, task: Task): Job {
     try {
       emit.job(updateJob(job.id, { status: 'running', progress: 0.02 }))
       const result = await task(ctx)
+      if (ctrl.signal.aborted) {
+        emit.job(updateJob(job.id, { status: 'canceled', message: null }))
+        return
+      }
       const extra =
         typeof result === 'string' ? { resultAssetId: result, message: null } : { message: result?.message ?? null }
       emit.job(updateJob(job.id, { status: 'done', progress: 1, ...extra }))

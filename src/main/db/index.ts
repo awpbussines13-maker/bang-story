@@ -138,6 +138,51 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE projects ADD COLUMN scene_count INTEGER;
   ALTER TABLE projects ADD COLUMN scene_sec INTEGER;
+  `,
+  // Move the former default image model once, while allowing users to choose it again later.
+  `
+  UPDATE settings
+  SET value = '"cf/@cf/black-forest-labs/flux-2-klein-9b"'
+  WHERE key = 'nineRouterImageModel'
+    AND value = '"ag/gemini-3.1-flash-image"';
+  `,
+  // Some deployed databases already recorded v9 before the model migration shipped.
+  `
+  UPDATE settings
+  SET value = '"cf/@cf/black-forest-labs/flux-2-klein-9b"'
+  WHERE key = 'nineRouterImageModel'
+    AND value = '"ag/gemini-3.1-flash-image"';
+  `,
+  // Projects can override the image provider; null keeps using the app default.
+  `
+  ALTER TABLE projects ADD COLUMN image_provider TEXT;
+  `,
+  `
+  CREATE TABLE atm_workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, channel_url TEXT NOT NULL DEFAULT '', language TEXT NOT NULL DEFAULT 'en', notes TEXT NOT NULL DEFAULT '', active_skill_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+  CREATE TABLE atm_references (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES atm_workspaces(id) ON DELETE CASCADE, url TEXT NOT NULL DEFAULT '', title TEXT NOT NULL, thumbnail_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', transcript TEXT NOT NULL DEFAULT '', transcript_status TEXT NOT NULL DEFAULT 'missing', video_analysis TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', view_count INTEGER, published_at TEXT NOT NULL DEFAULT '', captured_at INTEGER NOT NULL);
+  CREATE INDEX atm_references_workspace ON atm_references(workspace_id);
+  CREATE TABLE atm_skills (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES atm_workspaces(id) ON DELETE CASCADE, version INTEGER NOT NULL, name TEXT NOT NULL, instructions TEXT NOT NULL, analysis TEXT NOT NULL DEFAULT '', source_ids TEXT NOT NULL DEFAULT '[]', evidence TEXT NOT NULL DEFAULT 'metadata', created_at INTEGER NOT NULL, UNIQUE(workspace_id,version));
+  CREATE TABLE atm_productions (project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, workspace_id TEXT NOT NULL REFERENCES atm_workspaces(id), skill_id TEXT NOT NULL REFERENCES atm_skills(id), skill_snapshot TEXT NOT NULL, brief TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, outline_json TEXT, outline_hash TEXT, package_json TEXT, export_hash TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(workspace_id,idempotency_key));
+  CREATE INDEX atm_productions_workspace ON atm_productions(workspace_id);
+  CREATE TABLE atm_tasks (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES atm_workspaces(id), project_id TEXT REFERENCES projects(id) ON DELETE CASCADE, reference_id TEXT, kind TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, status TEXT NOT NULL, message TEXT NOT NULL, error TEXT, result_json TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(workspace_id,idempotency_key));
+  CREATE INDEX atm_tasks_workspace ON atm_tasks(workspace_id,status);
+  `,
+  `
+  CREATE TABLE character_reviews (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, clip_id TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE, asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE, input_hash TEXT NOT NULL, verdict TEXT NOT NULL, report_json TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, created_at INTEGER NOT NULL);
+  CREATE INDEX character_reviews_lookup ON character_reviews(clip_id,asset_id,input_hash,created_at);
+  `,
+  `
+  CREATE TABLE atm_channel_identities (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES atm_workspaces(id), channel_id TEXT NOT NULL, version INTEGER NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, payload_json TEXT NOT NULL, UNIQUE(workspace_id,channel_id,version), UNIQUE(workspace_id,idempotency_key));
+  ALTER TABLE atm_productions ADD COLUMN identity_snapshot TEXT;
+  `,
+  `
+  CREATE TABLE atm_editorial_revisions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, before_json TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(project_id,idempotency_key));
+  `,
+  `
+  ALTER TABLE characters ADD COLUMN reference_prompt TEXT NOT NULL DEFAULT '';
+  ALTER TABLE characters ADD COLUMN reference_image_asset_id TEXT;
+  ALTER TABLE clips ADD COLUMN imported_image_asset_id TEXT;
+  ALTER TABLE clips ADD COLUMN image_fit TEXT NOT NULL DEFAULT 'cover';
   `
 ]
 

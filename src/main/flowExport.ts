@@ -1,84 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { extname } from 'node:path'
-import { crc32, deflateRawSync } from 'node:zlib'
+import { makeZip, type ZipEntry } from './zipArchive'
 import type { FlowExportItem, FlowExportSummary } from '@shared/types'
 import { assetAbsPath, assetUrl } from './paths'
 import { getBundle } from './repo'
-
-interface ZipEntry {
-  name: string
-  data: Buffer
-  compress?: boolean
-}
-
-/** Builds an in-memory PKZIP archive using Node standard library only. */
-function makeZip(entries: ZipEntry[]): Buffer {
-  const parts: Buffer[] = []
-  const cdParts: Buffer[] = []
-  let offset = 0
-
-  for (const { name, data, compress } of entries) {
-    const nameBuf = Buffer.from(name, 'utf8')
-    const compMethod = compress ? 8 : 0
-    const comp = compress ? deflateRawSync(data) : data
-    const crc = crc32(data)
-
-    // Local file header (30 bytes)
-    const lh = Buffer.alloc(30)
-    lh.writeUInt32LE(0x04034b50, 0)
-    lh.writeUInt16LE(20, 4) // version needed: 2.0
-    lh.writeUInt16LE(0x0800, 6) // bit 11 = UTF-8 filename
-    lh.writeUInt16LE(compMethod, 8)
-    lh.writeUInt16LE(0, 10)
-    lh.writeUInt16LE(0, 12)
-    lh.writeUInt32LE(crc, 14)
-    lh.writeUInt32LE(comp.length, 18)
-    lh.writeUInt32LE(data.length, 22)
-    lh.writeUInt16LE(nameBuf.length, 26)
-    lh.writeUInt16LE(0, 28)
-
-    parts.push(lh, nameBuf, comp)
-
-    // Central directory header (46 bytes)
-    const cd = Buffer.alloc(46)
-    cd.writeUInt32LE(0x02014b50, 0)
-    cd.writeUInt16LE(20, 4) // version made by
-    cd.writeUInt16LE(20, 6) // version needed
-    cd.writeUInt16LE(0x0800, 8) // bit 11 = UTF-8
-    cd.writeUInt16LE(compMethod, 10)
-    cd.writeUInt16LE(0, 12)
-    cd.writeUInt16LE(0, 14)
-    cd.writeUInt32LE(crc, 16)
-    cd.writeUInt32LE(comp.length, 20)
-    cd.writeUInt32LE(data.length, 24)
-    cd.writeUInt16LE(nameBuf.length, 28)
-    cd.writeUInt16LE(0, 30) // extra len
-    cd.writeUInt16LE(0, 32) // comment len
-    cd.writeUInt16LE(0, 34) // disk start
-    cd.writeUInt16LE(0, 36) // internal attrs
-    cd.writeUInt32LE(0, 38) // external attrs
-    cd.writeUInt32LE(offset, 42) // relative offset of local header
-
-    cdParts.push(cd, nameBuf)
-    offset += lh.length + nameBuf.length + comp.length
-  }
-
-  const cdOffset = offset
-  const cdBuf = Buffer.concat(cdParts)
-
-  // End of central directory record (22 bytes)
-  const eocd = Buffer.alloc(22)
-  eocd.writeUInt32LE(0x06054b50, 0)
-  eocd.writeUInt16LE(0, 4)
-  eocd.writeUInt16LE(0, 6)
-  eocd.writeUInt16LE(entries.length, 8)
-  eocd.writeUInt16LE(entries.length, 10)
-  eocd.writeUInt32LE(cdBuf.length, 12)
-  eocd.writeUInt32LE(cdOffset, 16)
-  eocd.writeUInt16LE(0, 20)
-
-  return Buffer.concat([...parts, cdBuf, eocd])
-}
+import { sceneImageId } from '@shared/flowV2'
+import { assertCharacterConsistency } from './characterConsistency'
 
 function slug(s: string): string {
   return (
@@ -100,6 +27,7 @@ function escapeCsv(val: string | number): string {
 }
 
 export function generateFlowData(projectId: string): FlowExportSummary {
+  assertCharacterConsistency(projectId)
   const bundle = getBundle(projectId)
   const project = bundle.project
   const sortedClips = [...bundle.clips].sort((a, b) => a.sort - b.sort)
@@ -108,7 +36,7 @@ export function generateFlowData(projectId: string): FlowExportSummary {
     const idx = i + 1
     const padIdx = String(idx).padStart(2, '0')
     const titleSlug = slug(c.title || `clip_${idx}`)
-    const imageAsset = c.imageAssetId ? bundle.assets.find((a) => a.id === c.imageAssetId) : null
+    const imageAsset = bundle.assets.find((a) => a.id === sceneImageId(c)) ?? null
     const ext = imageAsset?.localPath ? extname(imageAsset.localPath) || '.png' : '.png'
     const imageFilename = `${padIdx}_${titleSlug}${ext}`
     const imageUrl = imageAsset ? assetUrl(projectId, imageAsset.localPath) : null
@@ -194,7 +122,7 @@ export function buildFlowZip(projectId: string): { zipBuffer: Buffer; fileName: 
   for (const item of data.items) {
     if (!item.hasImage) continue
     const clip = bundle.clips.find((c) => c.id === item.clipId)
-    const asset = clip?.imageAssetId ? bundle.assets.find((a) => a.id === clip.imageAssetId) : null
+    const asset = clip ? bundle.assets.find((a) => a.id === sceneImageId(clip)) : null
     if (!asset) continue
 
     const abs = assetAbsPath(projectId, asset.localPath)

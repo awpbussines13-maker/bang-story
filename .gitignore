@@ -3,6 +3,7 @@ node_modules
 out
 dist
 data
+agent-files/
 
 # Release archives belong on GitHub Releases, not in the repo
 *.zip
@@ -10,4 +11,5 @@ data
 *.log
 .DS_Store
 .env
+.env.web
 .claude/settings.local.json

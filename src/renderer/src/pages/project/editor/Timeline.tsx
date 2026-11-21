@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react'
 import { Film, Image as ImageIcon, Layers, Mic, Music, Scissors, Trash2, Type, ZoomIn } from 'lucide-react'
 import type { CaptionChunk } from '@shared/captions'
+import { sfxSpans } from '@shared/soundDesign'
 import { overlayEnd } from '@shared/overlays'
 import { MIN_ITEM_MS, musicSpan, voiceSpan } from '@shared/timeline'
 import type { Asset, EditorSettings, Overlay, WordTiming } from '@shared/types'
@@ -8,7 +9,7 @@ import { cx } from '../../../components/ui'
 import { errorText, timecode } from '../../../lib/format'
 import { useApp } from '../../../store/app'
 import { useProject } from '../../../store/project'
-import { UNKNOWN_AUDIO_MS, updateOverlay, usePlayback, voiceWindow, type TimelineItem } from './engine'
+import { UNKNOWN_AUDIO_MS, updateSfxCue, updateOverlay, usePlayback, voiceWindow, type TimelineItem } from './engine'
 import { TransitionButton } from './TransitionButton'
 import { Waveform } from './Waveform'
 
@@ -31,11 +32,12 @@ export type TimelinePick =
   | { kind: 'caption'; chunk: CaptionChunk }
   | { kind: 'music' }
   | { kind: 'overlay'; id: string }
+  | { kind: 'sfx'; id: string }
   | { kind: 'transition'; id: string }
 
 /** What the inspector is editing right now, so the timeline can mark it. */
 export type TimelineSelection =
-  | { kind: 'clip' | 'voice' | 'overlay' | 'transition'; id: string }
+  | { kind: 'clip' | 'voice' | 'overlay' | 'transition' | 'sfx'; id: string }
   | { kind: 'caption'; key: string; from: number }
   | { kind: 'music' }
   | null
@@ -171,6 +173,13 @@ export function Timeline({
   for (let s = 0; s <= total + 0.001; s += step) ticks.push(s)
   const lanes = overlayLanes(editor.overlays ?? [], total)
   const ms = musicSpan(editor, total)
+  const sfxLanes: ReturnType<typeof sfxSpans>[] = []
+  const displayedSound = editor.soundDesign ? { ...editor, soundDesign: { ...editor.soundDesign, enabled: true, cues: editor.soundDesign.cues.map(c => ({ ...c, muted: false })) } } : editor
+  for (const span of sfxSpans(items.map(it => it.clip), displayedSound).sort((a,b) => a.startMs-b.startMs)) {
+    const free = sfxLanes.find(lane => lane.every(s => s.startMs+s.playMs <= span.startMs || span.startMs+span.playMs <= s.startMs))
+    if (free) free.push(span); else sfxLanes.push([span])
+  }
+
 
   // Edges snap to the playhead and to the joints between clips.
   const joints = [0, total, ...items.map((it) => it.end)]
@@ -566,6 +575,42 @@ export function Timeline({
               )
             })}
           </Row>
+
+          {(sfxLanes.length ? sfxLanes : [[]]).map((lane, index) => <Row key={index} label={index === 0 ? 'Efek suara' : ''} icon={<Music className="size-4" />} height={30}>
+          {lane.map(span => {
+            const cue = span?.cue
+            const item = cue ? items.find(it => it.clip.id === cue.clipId) : null
+            const spec: DragSpec | null = cue && item ? {
+              click: () => pick({ kind: 'sfx', id: cue.id }),
+              begin: mode => {
+                usePlayback.getState().pause()
+                const in0 = cue.inMs, start0 = cue.startMs, len0 = cue.durationMs
+                return { move: delta => {
+                  const d = Math.round(delta * 1000)
+                  if (mode === 'move') updateSfxCue(cue.id, { startMs: clamp(start0+d, 0, item.clip.durationMs-1) })
+                  else if (mode === 'right') {
+                    const max = cue.assetId ? (assets[cue.assetId]?.durationMs ?? len0)-in0 : (cue.sourceDurationMs ?? len0)-in0
+                    const length = Math.round(clamp(len0+d, 1, Math.min(max, item.clip.durationMs-start0)))
+                    updateSfxCue(cue.id, { durationMs: length, sourceDurationMs: cue.sourceDurationMs ?? len0,
+                      fadeInMs: Math.min(cue.fadeInMs, Math.floor(length/2)), fadeOutMs: Math.min(cue.fadeOutMs, Math.floor(length/2)) })
+                  } else {
+                    const shift = Math.round(clamp(d, -Math.min(in0,start0), len0-1))
+                    const length = len0-shift
+                    updateSfxCue(cue.id, { startMs: start0+shift, inMs: in0+shift, durationMs: length,
+                      sourceDurationMs: cue.sourceDurationMs ?? in0+len0,
+                      fadeInMs: Math.min(cue.fadeInMs, Math.floor(length/2)), fadeOutMs: Math.min(cue.fadeOutMs, Math.floor(length/2)) })
+                  }
+                  return cue.label
+                } }
+              }
+            } : null
+            return cue && spec ? <div key={cue.id} role="button" tabIndex={0} aria-label={cue.label} aria-pressed={is('sfx',cue.id)}
+                {...on(spec,'move')} onKeyDown={e => e.key === 'Enter' && spec.click()}
+                className={cx('absolute top-0 flex h-[30px] cursor-pointer select-none items-center overflow-hidden rounded-md border border-[#CFC3EA] bg-[#EFEAFA] px-2 text-xs text-[#4A3B78]', (editor.soundDesign?.cues.find(c => c.id === cue.id)?.muted || !editor.soundDesign?.enabled) && 'opacity-40', is('sfx',cue.id) && SELECTED)}
+                style={{ left: span.startMs/1000*pps+1, width: Math.max(10,span.playMs/1000*pps-2) }}>
+                <span className="pointer-events-none truncate">{cue.label}</span>{edges(spec,'efek suara',is('sfx',cue.id))}
+              </div> : null
+          })}</Row>)}
 
           <Row label="Musik" icon={<Music className="size-4" />} height={30}>
             {music && (

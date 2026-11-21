@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { AlertCircle, ArrowLeft, Check, CheckCircle2, Loader2, Pencil, Save, SlidersHorizontal } from 'lucide-react'
 import type { Step } from '@shared/types'
 import { Button, IconButton, Kbd, cx } from '../../components/ui'
@@ -51,6 +51,8 @@ export function ProjectHeader({ doneSteps, right }: { doneSteps: Step[]; right?:
   const { project, updateProject, save, flush } = useProject()
   const { go } = useApp()
   const [editing, setEditing] = useState(false)
+  const [atmWorkspaceId, setAtmWorkspaceId] = useState<string | null>(null)
+  useEffect(() => { let live = true; if (project?.id) void window.api.atm.production(project.id).then((d) => { if (live) setAtmWorkspaceId(d?.production.workspaceId ?? null) }).catch(() => {}); return () => { live = false } }, [project?.id])
   if (!project) return null
 
   const setStep = (n: Step): void => {
@@ -63,6 +65,7 @@ export function ProjectHeader({ doneSteps, right }: { doneSteps: Step[]; right?:
   return (
     <header className="flex h-auto min-h-[64px] sm:h-[68px] shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 sm:px-6 py-2.5 sm:py-0">
       <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+        {atmWorkspaceId && <Button size="sm" onClick={async () => { await flush(); go({ name: 'atm', workspaceId: atmWorkspaceId, projectId: project.id }) }}>Judul & thumbnail ATM</Button>}
         <IconButton
           label="Kembali ke beranda"
           onClick={async () => {

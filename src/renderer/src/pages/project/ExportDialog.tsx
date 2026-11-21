@@ -1,3 +1,4 @@
+import { sceneImageId, sceneVideoId } from '@shared/flowV2'
 import { useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Download, FolderOpen, RotateCcw } from 'lucide-react'
 import type { ExportOptions, Job } from '@shared/types'
@@ -5,6 +6,7 @@ import { Button, Modal, Progress, Switch, cx, inputCls } from '../../components/
 import { clipNumber, errorText, mmss } from '../../lib/format'
 import { useApp } from '../../store/app'
 import { isRunning, useProject } from '../../store/project'
+import { CharacterConsistencyPanel } from '../../components/CharacterConsistencyPanel'
 
 const RESOLUTIONS: { id: ExportOptions['resolution']; label: string; sub: string; mb: number }[] = [
   { id: 720, label: '720p', sub: 'Lebih kecil', mb: 0.4 },
@@ -28,6 +30,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
   const { toast } = useApp()
   const [opts, setOpts] = useState<ExportOptions | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
+  const [charactersReady, setCharactersReady] = useState(false)
 
   useEffect(() => {
     if (!open || !project) return
@@ -40,7 +43,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
         fps: 30,
         burnCaptions: project.editor.captionStyle !== 'none',
         writeSrt: false,
-        normalizeAudio: true,
+        normalizeAudio: project.editor.normalizeAudio ?? true,
         duckMusic: project.editor.duckMusic,
         folder
       })
@@ -53,11 +56,15 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
   const totalMs = clips.reduce((n, c) => n + c.durationMs, 0)
   const missing = clips
     .map((c, i) => ({ c, i }))
-    .filter(({ c }) => !(c.imageAssetId || (c.motionType === 'video' && c.videoAssetId)))
+    .filter(({ c }) => !(sceneImageId(c) || sceneVideoId(c)))
   const noVoice = clips.filter((c) => !c.audioAssetId).length
   const res = RESOLUTIONS.find((r) => r.id === opts.resolution)!
   const sizeMb = Math.round((totalMs / 1000) * res.mb * (opts.fps === 60 ? 1.5 : 1))
-  const set = (p: Partial<ExportOptions>): void => setOpts({ ...opts, ...p })
+  const set = (p: Partial<ExportOptions>): void => {
+    setOpts({ ...opts, ...p })
+    if (p.normalizeAudio !== undefined) useProject.getState().updateEditor({ normalizeAudio: p.normalizeAudio })
+    if (p.duckMusic !== undefined) useProject.getState().updateEditor({ duckMusic: p.duckMusic })
+  }
 
   const start = async (): Promise<void> => {
     try {
@@ -101,8 +108,8 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
           <p className="text-lg font-semibold">Video selesai diekspor</p>
           <p className="break-all font-mono text-[13px] text-ink-2">{job.message}</p>
           <div className="flex gap-2.5">
-            <Button icon={<FolderOpen className="size-4" />} onClick={() => job.message && void window.api.exporter.reveal(job.message)}>
-              Buka folder
+            <Button icon={<FolderOpen className="size-4" />} onClick={() => void window.api.exporter.downloadProject(project.id)}>
+              Buka hasil ekspor
             </Button>
             <Button icon={<RotateCcw className="size-4" />} onClick={() => setJobId(null)}>
               Ekspor lagi
@@ -114,6 +121,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
         </div>
       ) : (
         <>
+          <CharacterConsistencyPanel projectId={project.id} beforeReview={flush} onReadyChange={setCharactersReady} />
           {missing.length > 0 && (
             <div className="flex items-start gap-2.5 rounded-xl border border-sun bg-sun-soft px-3.5 py-2.5 text-[13px] text-sun-ink">
               <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -241,7 +249,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
             ) : (
               <Button onClick={onClose}>Batal</Button>
             )}
-            <Button variant="primary" size="lg" icon={<Download className="size-[18px]" />} loading={running} disabled={missing.length > 0} onClick={() => void start()}>
+            <Button variant="primary" size="lg" icon={<Download className="size-[18px]" />} loading={running} disabled={missing.length > 0 || !charactersReady} onClick={() => void start()}>
               {running ? 'Mengekspor…' : 'Mulai ekspor'}
             </Button>
           </div>

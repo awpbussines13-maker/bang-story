@@ -16,13 +16,15 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
+  Upload,
   Volume2
 } from 'lucide-react'
 import { effectiveResolution, fitDuration, getImageModel, getVideoModel } from '@shared/higgsfield'
 import { CAMERA_PRESETS, MOTION_STRENGTHS, cameraAt, cameraCss } from '@shared/motion'
+import { sceneImageFit, sceneImageId } from '@shared/flowV2'
 import { needsVisual } from '@shared/script'
 import { geminiVoiceName, geminiVoiceTone } from '@shared/models'
-import type { Asset, Clip } from '@shared/types'
+import type { Asset, Clip, ImageFit } from '@shared/types'
 import { AutoTextarea } from '../../components/AutoTextarea'
 import { CharacterAvatar } from '../../components/CharacterAvatar'
 import { ClipVisual } from '../../components/ClipVisual'
@@ -33,6 +35,7 @@ import { useApp } from '../../store/app'
 import { isRunning, jobFor, useProject } from '../../store/project'
 import { CharacterModal } from './CharacterModal'
 import { FlowExportDialog } from './FlowExportDialog'
+import { applyImageChange, ImageFraming, SceneImageImport, ZipImageImport } from './FlowImages'
 
 function useAudio(): { play: (url: string) => void; stop: () => void; playing: string | null } {
   const ref = useRef<HTMLAudioElement | null>(null)
@@ -89,7 +92,7 @@ function MotionPreview({ image, clip }: { image: Asset; clip: Clip }) {
 
   return (
     <>
-      <img ref={img} src={image.url} alt="" draggable={false} className="absolute inset-0 size-full object-cover will-change-transform" />
+      <img ref={img} src={image.url} alt="" draggable={false} className="absolute inset-0 size-full object-cover will-change-transform" style={{ objectFit: sceneImageFit(clip), background: clip.importedImageAssetId ? '#000' : undefined }} />
       <button
         type="button"
         aria-pressed={playing}
@@ -103,21 +106,30 @@ function MotionPreview({ image, clip }: { image: Asset; clip: Clip }) {
   )
 }
 
-function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: number }) {
+function ClipPanel({ clip, index, total, onImport }: { clip: Clip; index: number; total: number; onImport: () => void }) {
   const { project, clips, characters, assets, jobs, updateClip, updateProject, removeClip, moveClip, addClip, select, flush } = useProject()
   const { toast } = useApp()
   const audio = useAudio()
   const [editPrompt, setEditPrompt] = useState(false)
+  const [changingImport, setChangingImport] = useState(false)
   if (!project) return null
 
-  const image = clip.imageAssetId ? assets[clip.imageAssetId] : null
+  const validCharacterIds = clip.characterIds.filter((id) => characters.some((c) => c.id === id))
+  const imageId = sceneImageId(clip)
+  const image = imageId ? assets[imageId] : null
+  const changeImport = async (fit: ImageFit | null): Promise<void> => {
+    setChangingImport(true)
+    try { applyImageChange(clip.projectId, await window.api.flowImages.changeImage(clip.projectId, clip.id, fit)) }
+    catch (e) { toast('error', errorText(e)) }
+    finally { setChangingImport(false) }
+  }
   const video = clip.videoAssetId ? assets[clip.videoAssetId] : null
   const voice = clip.audioAssetId ? assets[clip.audioAssetId] : null
   const imageJob = jobFor(jobs, 'image', { clipId: clip.id })
   const narration = useNarration()
   const videoJob = jobFor(jobs, 'video', { clipId: clip.id })
   const versions = Object.values(assets)
-    .filter((a) => a.clipId === clip.id && a.kind === 'image')
+    .filter((a) => a.clipId === clip.id && a.kind === 'image' && a.provider !== 'import')
     .sort((a, b) => a.createdAt - b.createdAt)
   const start = clips.slice(0, index).reduce((n, c) => n + c.durationMs, 0)
   const narrationChanged = !!voice && (voice.prompt ?? '').trim() !== clip.narration.trim()
@@ -188,7 +200,7 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
       {/* The preview stays put while the settings below it scroll. */}
       <div className="shrink-0 border-b border-line px-5 pb-3.5 pt-4">
         <div className={cx('relative overflow-hidden rounded-xl border-[1.5px] border-ink bg-paper', aspect)}>
-          {image && !isRunning(imageJob) && clip.motionType === 'camera' ? (
+          {image && !isRunning(imageJob) && (clip.importedImageAssetId || clip.motionType === 'camera') ? (
             <MotionPreview image={image} clip={clip} />
           ) : (
             <ClipVisual clip={clip} image={image} video={video} job={imageJob} large playVideo />
@@ -200,7 +212,7 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
               </Button>
             </div>
           )}
-          {versions.length > 1 && (
+          {!clip.importedImageAssetId && versions.length > 1 && (
             <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 rounded-[10px] border border-ink bg-surface/95 p-1.5">
               {versions.slice(-5).map((v, i, arr) => (
                 <button
@@ -236,10 +248,21 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
               Generate ulang
             </Button>
           )}
+          <Button size="sm" icon={<Upload className="size-4" />} onClick={onImport}>Impor gambar</Button>
           <Button size="sm" icon={<Pencil className="size-4" />} onClick={() => setEditPrompt(!editPrompt)}>
             {editPrompt ? 'Tutup prompt' : 'Edit prompt visual'}
           </Button>
         </div>
+
+        {clip.importedImageAssetId && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="ok">Gambar impor</Badge>
+            <ImageFraming fit={clip.imageFit} disabled={changingImport} onChange={(fit) => void changeImport(fit)} />
+            <Button size="sm" disabled={changingImport} onClick={() => void changeImport(null)}>
+              {clip.imageAssetId || clip.videoAssetId ? 'Kembali ke gambar AI' : 'Hapus gambar impor'}
+            </Button>
+          </div>
+        )}
 
         {editPrompt && (
           <AutoTextarea
@@ -259,13 +282,19 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
           />
         )}
 
+        {validCharacterIds.length < clip.characterIds.length && (
+          <Button size="sm" className="self-start" onClick={() => updateClip(clip.id, { characterIds: validCharacterIds })}>
+            Lepas pemeran yang sudah tidak ada
+          </Button>
+        )}
         {characters.length > 0 && (
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-semibold">Pemeran di klip ini</span>
             <div className="flex flex-wrap gap-1.5">
               {characters.map((c) => {
                 const on = clip.characterIds.includes(c.id)
-                const sheet = c.sheetAssetId ? assets[c.sheetAssetId] : null
+                const sheetId = c.referenceImageAssetId ?? c.sheetAssetId
+                const sheet = sheetId ? assets[sheetId] : null
                 return (
                   <button
                     key={c.id}
@@ -454,6 +483,8 @@ export function StoryboardStep() {
   /** A character id, "new" for an unsaved one, or null. */
   const [openChar, setOpenChar] = useState<string | null>(null)
   const [flowExportOpen, setFlowExportOpen] = useState(false)
+  const [zipOpen, setZipOpen] = useState(false)
+  const [imageImport, setImageImport] = useState<{ clipId: string; file?: File } | null>(null)
   const [credits, setCredits] = useState<number | null>(null)
   const [videoCredits, setVideoCredits] = useState<number | null>(null)
   const [planning, setPlanning] = useState(false)
@@ -475,9 +506,9 @@ export function StoryboardStep() {
   }, [project?.id, project?.imageModel, project?.aspectRatio])
 
   const stats = useMemo(() => {
-    const imgs = clips.filter((c) => c.imageAssetId).length
+    const imgs = clips.filter(sceneImageId).length
     const voices = clips.filter((c) => c.audioAssetId).length
-    const needImg = clips.filter((c) => !c.imageAssetId && !isRunning(jobFor(jobs, 'image', { clipId: c.id }))).length
+    const needImg = clips.filter((c) => !sceneImageId(c) && !isRunning(jobFor(jobs, 'image', { clipId: c.id }))).length
     const videoRunning = clips.filter((c) => isRunning(jobFor(jobs, 'video', { clipId: c.id }))).length
     const needVideo = clips.filter((c) => !c.videoAssetId && !isRunning(jobFor(jobs, 'video', { clipId: c.id })))
     return { imgs, voices, needImg, videoRunning, needVideo, total: clips.reduce((n, c) => n + c.durationMs, 0) }
@@ -523,7 +554,7 @@ export function StoryboardStep() {
   // Videos are made last: every clip has its picture, and the voice is final so each video matches its clip length.
   const readyForVideo =
     clips.length > 0 &&
-    clips.every((c) => c.imageAssetId) &&
+    clips.every(sceneImageId) &&
     narration.voiced > 0 &&
     narration.stale === 0 &&
     !narration.running
@@ -557,30 +588,57 @@ export function StoryboardStep() {
 
   if (!clips.length)
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-        <h2 className="font-display text-3xl font-bold">Storyboard masih kosong</h2>
-        <p className="max-w-md text-ink-2">Tulis naskahnya dulu di langkah Naskah, lalu buat visual tiap adegan. Kamu juga bisa menambah klip sendiri.</p>
+      <div className="h-full overflow-y-auto p-6">
+        <div className="mx-auto flex min-h-full max-w-5xl flex-col items-center justify-center gap-4 text-center">
+        <h2 className="font-display text-3xl font-bold">{characters.length ? 'Library karakter' : 'Storyboard masih kosong'}</h2>
+        <p className="max-w-md text-ink-2">{characters.length
+          ? 'Karakter dan lembar referensinya siap. Pilih karakter untuk melihat desain yang akan dipakai di adegan.'
+          : 'Tulis naskahnya dulu di langkah Naskah, lalu buat visual tiap adegan. Kamu juga bisa menambah klip sendiri.'}</p>
+        {characters.length > 0 && (
+          <div className="grid w-full gap-4 sm:grid-cols-2">
+            {characters.map((c) => {
+              const sheetId = c.referenceImageAssetId ?? c.sheetAssetId
+              const sheet = sheetId ? assets[sheetId] : null
+              return (
+                <button key={c.id} type="button" aria-label={`Lihat referensi ${c.name}`} onClick={() => setOpenChar(c.id)}
+                  className="overflow-hidden rounded-2xl border border-line bg-paper text-left transition-colors hover:border-ink-2">
+                  <div className="flex h-56 items-center justify-center bg-surface p-3">
+                    {sheet ? <img src={sheet.url} alt={`Lembar referensi ${c.name}`} className="h-full w-full object-contain" />
+                      : <CharacterAvatar name={c.name} size={96} />}
+                  </div>
+                  <div className="p-4"><div className="font-semibold">{c.name}</div>
+                    <p className="mt-1 text-sm text-ink-2">{sheet ? 'Referensi siap · klik untuk melihat' : 'Belum ada lembar referensi'}</p>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
         <div className="flex gap-2.5">
           <Button onClick={() => updateProject({ step: 2 })}>Ke Naskah</Button>
           <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => addClip(null)}>
             Tambah klip
           </Button>
         </div>
+        </div>
+        <CharacterModal characterId={openChar} onClose={() => setOpenChar(null)} onCreated={(id) => setOpenChar(id)} />
       </div>
     )
 
   return (
-    <div className="grid h-full grid-rows-[64px_minmax(0,1fr)_80px]">
-      <div className="flex items-center gap-2 border-b border-line bg-paper px-6">
+    <div className="grid h-full grid-rows-[auto_minmax(0,1fr)_80px]">
+      <div className="flex min-h-16 flex-wrap items-center gap-2 border-b border-line bg-paper px-6 py-2">
         <span className="mr-1 text-[13px] font-semibold text-ink-2">Pemeran</span>
         <div className="scroll-thin flex min-w-0 gap-2 overflow-x-auto py-1">
           {characters.map((c) => {
-            const sheet = c.sheetAssetId ? assets[c.sheetAssetId] : null
+            const sheetId = c.referenceImageAssetId ?? c.sheetAssetId
+            const sheet = sheetId ? assets[sheetId] : null
             const running = isRunning(jobFor(jobs, 'sheet', { characterId: c.id }))
             return (
               <button
                 key={c.id}
                 type="button"
+                aria-label={`Edit pemeran ${c.name}`}
                 onClick={() => setOpenChar(c.id)}
                 className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-line-2 bg-surface py-0 pl-1 pr-3 text-[13px] font-medium hover:border-ink-2"
               >
@@ -632,8 +690,9 @@ export function StoryboardStep() {
           onClick={() => setFlowExportOpen(true)}
           title="Ekspor gambar dan arahan gerak video untuk dieksekusi secara bulk di Google Flow (Veo)"
         >
-          Ekspor Google Flow
+          Ekspor video AI ke Flow
         </Button>
+        <Button icon={<Upload className="size-4" />} onClick={() => setZipOpen(true)}>Impor gambar dari ZIP</Button>
         {readyForVideo && (
           <Button
             variant="primary"
@@ -683,13 +742,19 @@ export function StoryboardStep() {
               const on = c.id === sel?.id
               const imageJob = jobFor(jobs, 'image', { clipId: c.id })
               const ttsRunning = isRunning(jobFor(jobs, 'tts', { clipId: c.id }))
-              const status = c.imageAssetId ? { label: 'Siap', tone: 'ok' as const } : isRunning(imageJob) ? { label: 'Proses', tone: 'warn' as const } : imageJob?.status === 'failed' ? { label: 'Gagal', tone: 'bad' as const } : { label: 'Draf', tone: 'draft' as const }
+              const imageId = sceneImageId(c)
+              const status = imageId ? { label: c.importedImageAssetId ? 'Gambar impor' : 'Siap', tone: 'ok' as const } : isRunning(imageJob) ? { label: 'Proses', tone: 'warn' as const } : imageJob?.status === 'failed' ? { label: 'Gagal', tone: 'bad' as const } : { label: 'Draf', tone: 'draft' as const }
               return (
                 <button
                   key={c.id}
                   type="button"
                   aria-pressed={on}
                   onClick={() => select(c.id)}
+                  onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }}
+                  onDrop={(e) => {
+                    const file = e.dataTransfer.files[0]
+                    if (file) { e.preventDefault(); select(c.id); setImageImport({ clipId: c.id, file }) }
+                  }}
                   className={cx(
                     'flex flex-col overflow-hidden rounded-[14px] bg-surface text-left',
                     on ? 'border-2 border-accent shadow-ink-md' : 'border border-line hover:border-line-3'
@@ -698,12 +763,12 @@ export function StoryboardStep() {
                   <div className={cx('relative w-full overflow-hidden bg-paper', project.aspectRatio === '9:16' ? 'aspect-[9/16]' : 'aspect-video')}>
                     <ClipVisual
                       clip={c}
-                      image={c.imageAssetId ? assets[c.imageAssetId] : null}
+                      image={imageId ? assets[imageId] : null}
                       video={c.videoAssetId ? assets[c.videoAssetId] : null}
                       job={imageJob}
                     />
                     <span className="absolute left-2 top-2 rounded-md bg-ink px-[7px] py-0.5 font-mono text-xs text-paper">{clipNumber(i)}</span>
-                    {c.motionType === 'video' && (
+                    {!c.importedImageAssetId && c.motionType === 'video' && (
                       <span className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-md bg-ink text-paper" title="Video AI">
                         <Film className="size-3.5" />
                       </span>
@@ -714,6 +779,11 @@ export function StoryboardStep() {
                   </div>
                   <div className="flex w-full flex-col gap-2 px-3 pb-3 pt-2.5">
                     <span className="truncate text-sm font-semibold">{c.title || 'Tanpa judul'}</span>
+                    {c.characterIds.length > 0 && <div className="flex flex-wrap gap-1">
+                      {characters.filter((cast) => c.characterIds.includes(cast.id)).map((cast) => (
+                        <span key={cast.id} className="rounded-full bg-sand px-2 py-0.5 text-xs text-ink-2">{cast.name}</span>
+                      ))}
+                    </div>}
                     <div className="flex items-center gap-2">
                       <Badge tone={status.tone}>{status.label}</Badge>
                       <span className={cx('inline-flex items-center gap-1 text-xs', c.audioAssetId ? 'text-ok-ink' : 'text-muted')}>
@@ -727,7 +797,7 @@ export function StoryboardStep() {
             })}
           </div>
         </section>
-        {sel && <ClipPanel key={sel.id} clip={sel} index={selIndex} total={clips.length} />}
+        {sel && <ClipPanel key={sel.id} clip={sel} index={selIndex} total={clips.length} onImport={() => setImageImport({ clipId: sel.id })} />}
       </div>
 
       <footer className="flex items-center gap-4 border-t border-line bg-surface px-6">
@@ -758,6 +828,10 @@ export function StoryboardStep() {
         </Button>
       </footer>
       <CharacterModal characterId={openChar} onClose={() => setOpenChar(null)} onCreated={(id) => setOpenChar(id)} />
+      {zipOpen && <ZipImageImport projectId={project.id} onClose={() => setZipOpen(false)}
+        onMissing={(clipId) => { setZipOpen(false); select(clipId); setImageImport({ clipId }) }} />}
+      {imageImport && <SceneImageImport projectId={project.id} clipId={imageImport.clipId} droppedFile={imageImport.file}
+        initialFit={clips.find((c) => c.id === imageImport.clipId)?.imageFit ?? 'cover'} onClose={() => setImageImport(null)} />}
       <FlowExportDialog open={flowExportOpen} onClose={() => setFlowExportOpen(false)} />
     </div>
   )

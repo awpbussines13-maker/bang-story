@@ -7,8 +7,9 @@ import { visualSourceOf } from '@shared/script'
 import { MIN_ITEM_MS, splitNarration, voiceSpan, wordGapNear } from '@shared/timeline'
 import type { Asset, Clip, ProjectBundle } from '@shared/types'
 import { emit } from './events'
+import { soundPlanKey, splitSfxCues } from '@shared/soundDesign'
 import { assetAbsPath, binPath } from './paths'
-import { getAsset, getBundle, getClip, insertAsset, insertClipAfter, patchClip, patchClipText, touchProject } from './repo'
+import { getAsset, getBundle, getClip, insertAsset, insertClipAfter, patchClip, patchClipText, touchProject, updateEditorSettings } from './repo'
 
 /**
  * Timeline edits that touch files or several clips at once: splitting a clip in two and taking a voice off
@@ -122,6 +123,8 @@ export async function splitClip(clipId: string, atMs: number): Promise<ProjectBu
   const a = { ...clip, narration: narrationA }
   patchClipText(clip.id, { narration: narrationA, visualSource: visualSourceOf(a), transition: 'cut' })
   patchClip(clip.id, { durationMs: at, ...voiceA })
+  const sound = getBundle(clip.projectId).project.editor.soundDesign
+  if (sound) updateEditorSettings(clip.projectId, { soundDesign: { ...sound, planHash: soundPlanKey(getBundle(clip.projectId).clips, getBundle(clip.projectId).assets), cues: splitSfxCues(sound.cues, clip.id, newId, at, randomUUID) } })
   touchProject(clip.projectId)
   return getBundle(clip.projectId)
 }

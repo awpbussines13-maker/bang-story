@@ -26,7 +26,7 @@ interface ProjectState {
   addClip(afterId: string | null): string
   removeClip(id: string): void
   moveClip(id: string, dir: -1 | 1): void
-  addCharacter(init?: { name: string; description: string }): string
+  addCharacter(init?: { name: string; description: string; referencePrompt?: string }): string
   removeCharacter(id: string): void
   save(): Promise<void>
   flush(): Promise<void>
@@ -46,8 +46,8 @@ function snapshot(s: ProjectState): ProjectSnapshot {
   const { createdAt: _c, updatedAt: _u, coverAssetId: _cv, ...project } = s.project!
   return {
     project,
-    characters: s.characters.map(({ sheetAssetId: _s, ...c }) => c),
-    clips: s.clips.map(({ imageAssetId: _i, videoAssetId: _v, audioAssetId: _a, ...c }) => c)
+    characters: s.characters.map(({ sheetAssetId: _s, referenceImageAssetId: _r, ...c }) => c),
+    clips: s.clips.map(({ imageAssetId: _i, videoAssetId: _v, audioAssetId: _a, importedImageAssetId: _imp, imageFit: _fit, ...c }) => c)
   }
 }
 
@@ -104,6 +104,10 @@ export const useProject = create<ProjectState>((set, get) => {
     },
     updateClip: (id, patch) => {
       set({ clips: get().clips.map((c) => (c.id === id ? { ...c, ...patch } : c)) })
+      if (patch.durationMs != null && get().project?.editor.soundDesign) {
+        const p = get().project!
+        set({ project: { ...p, editor: { ...p.editor, soundDesign: { ...p.editor.soundDesign!, cues: p.editor.soundDesign!.cues.map(c => c.clipId === id ? { ...c, startMs: Math.min(c.startMs, Math.max(0, patch.durationMs!-1)) } : c) } } } })
+      }
       touch()
     },
     updateCharacter: (id, patch) => {
@@ -138,6 +142,8 @@ export const useProject = create<ProjectState>((set, get) => {
         voiceInMs: 0,
         voiceOutMs: null,
         voiceStartMs: 0,
+        importedImageAssetId: null,
+        imageFit: 'cover',
         imageAssetId: null,
         videoAssetId: null,
         audioAssetId: null
@@ -151,6 +157,10 @@ export const useProject = create<ProjectState>((set, get) => {
       const clips = get().clips
       const i = clips.findIndex((c) => c.id === id)
       const rest = resort(clips.filter((c) => c.id !== id))
+      if (get().project?.editor.soundDesign) {
+        const p = get().project!
+        set({ project: { ...p, editor: { ...p.editor, soundDesign: { ...p.editor.soundDesign!, cues: p.editor.soundDesign!.cues.filter(c => c.clipId !== id) } } } })
+      }
       set({ clips: rest, selectedClipId: rest[Math.min(i, rest.length - 1)]?.id ?? null })
       touch()
     },
@@ -170,7 +180,9 @@ export const useProject = create<ProjectState>((set, get) => {
         projectId: p.id,
         name: init?.name.trim() || 'Pemeran baru',
         description: init?.description.trim() ?? '',
+        referencePrompt: init?.referencePrompt?.trim() ?? '',
         sheetAssetId: null,
+        referenceImageAssetId: null,
         sort: get().characters.length
       }
       set({ characters: [...get().characters, c] })

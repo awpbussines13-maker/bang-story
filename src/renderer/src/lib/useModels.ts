@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModelList, ModelSource } from '@shared/types'
 import { errorText } from './format'
 
@@ -10,22 +10,25 @@ export function useModels(source: ModelSource, enabled: boolean, scope = '') {
   const [list, setList] = useState<ModelList | null>(memory.get(key) ?? null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const requestId = useRef(0)
 
   const load = useCallback(
     async (refresh: boolean): Promise<ModelList | null> => {
       if (!enabled) return null
+      const currentRequest = ++requestId.current
       setLoading(true)
       setError(null)
       try {
         const l = await window.api.models.list(source, refresh)
+        if (currentRequest !== requestId.current) return l
         memory.set(key, l)
         setList(l)
         return l
       } catch (e) {
-        setError(errorText(e))
+        if (currentRequest === requestId.current) setError(errorText(e))
         return null
       } finally {
-        setLoading(false)
+        if (currentRequest === requestId.current) setLoading(false)
       }
     },
     [source, enabled, key]
@@ -33,8 +36,13 @@ export function useModels(source: ModelSource, enabled: boolean, scope = '') {
 
   useEffect(() => {
     setList(memory.get(key) ?? null)
+    setError(null)
+    setLoading(false)
     if (enabled) void load(false)
-  }, [key, enabled])
+    return () => {
+      requestId.current++
+    }
+  }, [key, enabled, load])
 
   return {
     models: list?.models ?? [],

@@ -32,7 +32,7 @@ export const VISUAL_STYLES: VisualStyle[] = [
     swatch: '#F2B266',
     ink: '#1F1D1A',
     prompt:
-      '2D flat vector illustration frame for a YouTube storytelling video. Colorful, detailed flat background (never plain white). ALL characters are simple STICKMAN figures: thin black line bodies, arms and legs, plain round white heads with minimal cartoon faces (dot eyes, small eyebrows, simple mouth), no realistic anatomy. Each stickman wears only small costume pieces that match their role (hat, crown, sash, headcloth, props) while the stick body stays visible. Clean bold outlines, flat colors with light soft shading, every character in the same consistent stickman style, cinematic composition with depth. ' +
+      'Flat 2D cartoon illustration across the ENTIRE frame, including every background and prop. Restrained muted colors, simple filled shapes, clean bold outlines and minimal cel shading. Water, buildings, metal and weather are drawn flat, never photographed or rendered in 3D. No glossy reflections, photorealistic textures, volumetric lighting, bloom, HDR, depth-of-field blur or highly polished cinematic scenery. ALL characters are simple STICKMAN figures: thin black line bodies and limbs, plain round white heads, minimal cartoon faces, no realistic anatomy. When character sheets are supplied, copy their exact clothing, hair and accessories; reference clothing may cover the stick limbs. Never invent headwear absent from the sheet. Without sheets use simple role-appropriate costume pieces. Keep a clear readable composition and a consistent subdued illustrated palette. Backgrounds contain the scene location, never a blank white studio. ' +
       NO_TEXT,
     characterHint: 'a stickman figure with a round white head and thin black line limbs, wearing role-specific costume pieces'
   },
@@ -217,4 +217,11 @@ export const VISUAL_STYLES: VisualStyle[] = [
 
 export function getStyle(id: string): VisualStyle {
   return VISUAL_STYLES.find((s) => s.id === id) ?? VISUAL_STYLES[0]
+}
+
+/** A selected image defines the intended rendering more precisely than a broad preset. */
+export function getSceneStylePrompt(id: string, hasReference: boolean): string {
+  return hasReference
+    ? 'The supplied style reference is authoritative for the entire frame: match its palette, flatness, outlines, shading, texture and softness. Preserve illustrated grain or soft backgrounds already present there; do not reject them under a stricter generic preset. Do not add photographic detail, glossy 3D surfaces, stronger reflections or cinematic lighting absent from that reference. Character sheets define identities and clothing; the style reference never overrides them.'
+    : getStyle(id).prompt
 }

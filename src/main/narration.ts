@@ -28,7 +28,9 @@ import { probeDurationMs } from './services/audio'
 import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
 import * as ninerouter from './services/ninerouter'
-import { timeScript, whisperReady } from './whisper'
+import { timeScript, whisperReady, whisperStatus } from './whisper'
+import { getDb } from './db'
+import { getJob } from './repo'
 
 /**
  * Voices many scenes in one continuous take and cuts it per scene. A single take keeps the voice, pace and
@@ -107,6 +109,7 @@ async function whisperTimes(take: string, words: string[], p: Project, total: nu
     return await timeScript(take, words, p.language, total, tmp, ctx.signal)
   } catch (e) {
     if (ctx.signal.aborted) throw e
+    // Preserve the paid recording as provisional pieces. ATM must realign their boundaries before export.
     console.warn('[whisper]', (e as Error).message)
     return null
   }
@@ -267,7 +270,7 @@ async function elevenTake(
   return out
 }
 
-function store(p: Project, s: Segment, voice: string, takeId: string, bytes: Buffer): void {
+function store(p: Project, s: Segment, voice: string, takeId: string, bytes: Buffer, extraMeta: Record<string, unknown> = {}): void {
   const rel = `audio/${randomUUID()}.wav`
   const abs = assetAbsPath(p.id, rel)
   mkdirSync(dirname(abs), { recursive: true })
@@ -281,7 +284,7 @@ function store(p: Project, s: Segment, voice: string, takeId: string, bytes: Buf
     prompt: s.clip.narration,
     localPath: rel,
     durationMs: s.durationMs,
-    meta: { words: s.words, estimatedTimings: s.estimated, voice, take: takeId, ...(s.timedBy ? { timedBy: s.timedBy } : {}) }
+    meta: { words: s.words, estimatedTimings: s.estimated, voice, take: takeId, ...(s.timedBy ? { timedBy: s.timedBy } : {}), ...extraMeta }
   })
   emit.asset(asset)
   // Each piece already carries half of the pause on either side, so the pieces play back as the one take.
@@ -290,6 +293,59 @@ function store(p: Project, s: Segment, voice: string, takeId: string, bytes: Buf
   const patch = { audioAssetId: asset.id, durationMs, voiceInMs: 0, voiceOutMs: null, voiceStartMs: 0 }
   patchClip(s.clip.id, patch)
   emit.clip({ clipId: s.clip.id, patch })
+}
+
+/** Reassemble estimated scene cuts, align the full existing recording, and cut on spoken words. No TTS. */
+export function realignNarration(projectId: string, idempotencyKey: string): Job {
+  const db = getDb()
+  const previous = db.prepare("SELECT id FROM jobs WHERE project_id=? AND kind='align' AND json_extract(payload_json,'$.realignKey')=? ORDER BY created_at DESC LIMIT 1").get(projectId, idempotencyKey) as { id: string } | undefined
+  if (previous) return getJob(previous.id)!
+  if (activeProjectJob(projectId, 'align') || activeProjectJob(projectId, 'narration') || activeProjectJob(projectId, 'export')) throw new Error('Tunggu pekerjaan suara/ekspor aktif selesai.')
+  if (!whisperReady()) throw new Error(whisperStatus().error || 'Whisper lokal belum siap.')
+  const p = getProject(projectId)
+  const clips = clipsOf(projectId)
+  const assets = clips.map(c => getAsset(c.audioAssetId))
+  if (!clips.length || clips.some((c, i) => !c.narration.trim() || !assets[i] || assets[i]!.prompt !== c.narration || c.voiceInMs || c.voiceOutMs != null || c.voiceStartMs)) throw new Error('Penyelarasan ulang memerlukan seluruh suara asli tanpa trim dengan naskah yang masih cocok.')
+  const sourceIds = assets.map(a => a!.id)
+  const job = insertJob({ projectId, kind: 'align', provider: 'whisper', payload: { realignKey: idempotencyKey, sourceAssetIds: sourceIds } })
+  emit.job(job)
+  return runJob(job, 'whisper', async ctx => {
+    const tmp = join(dataDir(), 'tmp', `realign-${ctx.jobId}`)
+    mkdirSync(tmp, { recursive: true })
+    try {
+      const list = join(tmp, 'sources.txt')
+      writeFileSync(list, assets.map(a => "file '" + assetAbsPath(projectId, a!.localPath).replace(/'/g, "'\\''") + "'").join('\n'))
+      const take = join(tmp, 'existing-recording.wav')
+      ctx.progress(.02, 'Menggabungkan rekaman tersimpan tanpa membuat suara baru')
+      await ffmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c:a', 'pcm_s16le', '-ac', '1', take], ctx.signal)
+      const total = (await probeDurationMs(take)) / 1000
+      const perScene = clips.map(c => spokenWords(c.narration))
+      ctx.progress(.08, 'Whisper menyelaraskan seluruh rekaman agar batas adegan mengikuti kata')
+      const timed = await timeScript(take, perScene.flat(), p.language, total, tmp, ctx.signal)
+      const ranges: WordTiming[][] = []
+      let at = 0
+      for (const words of perScene) { ranges.push(timed.slice(at, at + words.length)); at += words.length }
+      const silence = await detectSilences(take, ctx.signal)
+      const cuts = cutsFromWords(ranges.slice(0, -1).map((r, i) => ({ end: r[r.length - 1].end, start: ranges[i + 1][0].start })), silence)
+      const bounds = [0, ...cuts, total]
+      const segments: Segment[] = []
+      for (let i = 0; i < clips.length; i++) {
+        const start = bounds[i], end = bounds[i + 1], len = end - start
+        if (len < .2 || ranges[i].some(w => w.start < start - .31 || w.end > end + .31)) throw new Error('Batas suara tidak pasti. Rekaman asli dipertahankan untuk pemeriksaan.')
+        const file = join(tmp, `scene-${i}.wav`)
+        ctx.progress(.8 + .15 * i / clips.length, `Memotong ulang rekaman ${i + 1}/${clips.length}`)
+        await cut(take, start, end, file, ctx.signal)
+        segments.push({ clip: clips[i], file, durationMs: await probeDurationMs(file), words: ranges[i].map(w => ({ ...w, start: Math.max(0, Math.min(len, w.start - start)), end: Math.max(0, Math.min(len, w.end - start)) })), estimated: false, timedBy: WHISPER_TIMING })
+      }
+      ctx.signal.throwIfAborted()
+      db.transaction(() => {
+        if (clips.some((c, i) => { const current = getClip(c.id); return current.audioAssetId !== sourceIds[i] || current.narration !== c.narration })) throw new Error('Project berubah selama penyelarasan; hasil lama tetap dipertahankan.')
+        for (let i = 0; i < segments.length; i++) store(p, segments[i], String(assets[i]!.meta.voice || p.ttsVoice || ''), ctx.jobId, readFileSync(segments[i].file), { boundaryRealigned: true, sourceAssetId: sourceIds[i], realignJobId: ctx.jobId })
+        touchProject(projectId)
+      }).immediate()
+      return { message: `${clips.length} batas adegan diperbaiki dari rekaman tersimpan; tanpa TTS baru` }
+    } finally { rmSync(tmp, { recursive: true, force: true }) }
+  })
 }
 
 /** Voices the scenes that need it ("missing") or every scene ("all") as one continuous take. */
@@ -303,7 +359,7 @@ export function generateNarration(projectId: string, mode: 'missing' | 'all'): J
   emit.job(job)
   return runJob(job, 'tts', async (ctx) => {
     const p = getProject(projectId)
-    const voice = p.ttsVoice || (p.ttsProvider === 'gemini' ? 'Charon' : p.ttsProvider === '9router' ? (getSettings().nineRouterTtsModel || 'gemini/gemini-3.1-flash-tts-preview') : '')
+    const voice = p.ttsVoice || (p.ttsProvider === 'gemini' ? 'Charon' : p.ttsProvider === '9router' ? (getSettings().nineRouterTtsModel || 'gemini/gemini-3.8-flash-tts') : '')
     if (p.ttsProvider === 'elevenlabs' && !voice) throw new Error('Pilih suara ElevenLabs dulu di langkah Ide cerita.')
     const clips = targets.map((c) => getClip(c.id)).filter((c) => c.narration.trim())
     const groups = parts(clips, p.ttsProvider)
@@ -351,7 +407,7 @@ export function generateNarration(projectId: string, mode: 'missing' | 'all'): J
 export function syncCaptions(projectId: string, mode: 'stale' | 'all' = 'stale'): Job {
   const running = activeProjectJob(projectId, 'align')
   if (running) return running
-  if (!whisperReady()) throw new Error('Model Whisper belum diunduh. Unduh dulu di Pengaturan, bagian Caption akurat.')
+  if (!whisperReady()) throw new Error(whisperStatus().error || 'Model Whisper belum diunduh. Unduh dulu di Pengaturan, bagian Caption akurat.')
   const targets = clipsOf(projectId).filter((c) => {
     const a = getAsset(c.audioAssetId)
     return !!a && (mode === 'all' ? a.provider !== 'elevenlabs' : captionNeedsSync(a))

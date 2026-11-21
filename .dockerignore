@@ -1,3 +1,11 @@
 node_modules
 .git
 dist
+out
+data
+agent-files
+.env
+.env.*
+.hermes
+.superpowers
+docs/superpowers

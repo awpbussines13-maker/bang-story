@@ -1,3 +1,4 @@
+import { sceneImageId, sceneVideoId } from '@shared/flowV2'
 import { useEffect, useRef, useState } from 'react'
 import { AudioLines, Check, Clapperboard, Copy, ExternalLink, Film, Layers, Mic, Move, Music, Play, Sparkles, Type, Upload, Volume2, X } from 'lucide-react'
 import {
@@ -24,16 +25,18 @@ import { isRunning, jobFor, useProject } from '../../../store/project'
 import { UNKNOWN_AUDIO_MS, useAudition, useCaptionUi, useTimeline } from './engine'
 import { OverlayPanel } from './OverlayPanel'
 import { TransitionPanel } from './TransitionPanel'
+import { SoundPanel } from './SoundPanel'
 
 /** 'transisi' has no button on the rail; it opens from the round buttons between clips on the timeline. */
-export type InspectorTab = 'klip' | 'suara' | 'caption' | 'overlay' | 'musik' | 'transisi'
+export type InspectorTab = 'klip' | 'suara' | 'caption' | 'overlay' | 'musik' | 'transisi' | 'sfx'
 
 export const INSPECTOR_TABS: { id: InspectorTab; label: string; icon: typeof Move }[] = [
   { id: 'klip', label: 'Klip', icon: Move },
   { id: 'suara', label: 'Suara', icon: Mic },
   { id: 'caption', label: 'Caption', icon: Type },
   { id: 'overlay', label: 'Overlay', icon: Layers },
-  { id: 'musik', label: 'Musik', icon: Music }
+  { id: 'musik', label: 'Musik', icon: Music },
+  { id: 'sfx', label: 'Efek suara', icon: AudioLines }
 ]
 
 function Section({ title, children, className }: { title: string; children: React.ReactNode; className?: string }) {
@@ -64,7 +67,8 @@ const VIDEO_CAMERA_OPTIONS = [
 function ClipTab({ clip, index }: { clip: Clip; index: number }) {
   const { project, assets, jobs, updateClip, flush } = useProject()
   const { toast } = useApp()
-  const image = clip.imageAssetId ? assets[clip.imageAssetId] : null
+  const imageId = sceneImageId(clip)
+  const image = imageId ? assets[imageId] : null
   const video = clip.videoAssetId ? assets[clip.videoAssetId] : null
   const videoJob = jobFor(jobs, 'video', { clipId: clip.id })
   const videoCamera = clip.videoCamera ?? 'static'
@@ -223,7 +227,8 @@ function VoiceTrim({ clip, voice }: { clip: Clip; voice: Asset }) {
   const span = voiceSpan(clip, voice.durationMs ?? UNKNOWN_AUDIO_MS)
   const trimmed = (clip.voiceInMs ?? 0) > 0 || clip.voiceOutMs != null || (clip.voiceStartMs ?? 0) > 0
   const cutMs = span.lengthMs - span.playMs
-  const video = clip.motionType === 'video' && clip.videoAssetId ? assets[clip.videoAssetId] : null
+  const videoId = sceneVideoId(clip)
+  const video = videoId ? assets[videoId] : null
   const room = video?.durationMs ? video.durationMs - (clip.mediaInMs ?? 0) : Infinity
   const needed = span.startMs + span.lengthMs + 300
   if (!trimmed && cutMs <= 30) return null
@@ -868,6 +873,7 @@ export function Inspector({
       {tab === 'caption' && <CaptionTab />}
       {tab === 'overlay' && <OverlayPanel total={total} />}
       {tab === 'musik' && <MusicTab />}
+      {tab === 'sfx' && <SoundPanel />}
       {tab === 'transisi' && <TransitionView id={transitionId} />}
     </aside>
   )

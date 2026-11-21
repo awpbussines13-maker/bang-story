@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type Route = { name: 'home' } | { name: 'settings'; back?: Route } | { name: 'project'; id: string }
+export type Route = { name: 'atm'; workspaceId?: string; projectId?: string } | { name: 'home' } | { name: 'settings'; back?: Route } | { name: 'project'; id: string }
 
 export interface Toast {
   id: number

@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { sceneImageId, sceneVideoId } from '@shared/flowV2'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { timelineChunks, type CaptionChunk } from '@shared/captions'
 import { transitionSecOf } from '@shared/motion'
+import { soundPlanKey } from '@shared/soundDesign'
 import { clipCaptionWords, voiceSpan } from '@shared/timeline'
-import type { Asset, Clip, Overlay, TransitionId } from '@shared/types'
+import type { Asset, Clip, Overlay, SfxCue, TransitionId } from '@shared/types'
 import { useProject } from '../../../store/project'
+import { errorText } from '../../../lib/format'
+import { waitForStudioJob } from '../../../lib/audioJobs'
 
 export interface TimelineItem {
   clip: Clip
@@ -19,6 +23,7 @@ export interface TimelineItem {
 interface PlaybackState {
   t: number
   playing: boolean
+  audioReady: boolean
   seek(t: number): void
   play(): void
   pause(): void
@@ -28,6 +33,7 @@ interface PlaybackState {
 export const usePlayback = create<PlaybackState>((set, get) => ({
   t: 0,
   playing: false,
+  audioReady: false,
   seek: (t) => set({ t: Math.max(0, t) }),
   play: () => set({ playing: true }),
   pause: () => set({ playing: false }),
@@ -39,6 +45,19 @@ export const useOverlayUi = create<{ selectedId: string | null; select(id: strin
   selectedId: null,
   select: (id) => set({ selectedId: id })
 }))
+
+export const useSfxUi = create<{ selectedId: string | null; select(id: string | null): void }>(set => ({ selectedId: null, select: selectedId => set({ selectedId }) }))
+
+export function updateSfxCue(id: string, patch: Partial<SfxCue>): void {
+  const state = useProject.getState(), sound = state.project?.editor.soundDesign
+  if (sound) state.updateEditor({ soundDesign: { ...sound, cues: sound.cues.map(c => c.id === id ? { ...c, ...patch, manual: true } : c) } })
+}
+
+export function removeSfxCue(id: string): void {
+  const state = useProject.getState(), sound = state.project?.editor.soundDesign
+  if (sound) state.updateEditor({ soundDesign: { ...sound, cues: sound.cues.filter(c => c.id !== id) } })
+  if (useSfxUi.getState().selectedId === id) useSfxUi.getState().select(null)
+}
 
 /**
  * A part of the timeline played in the preview only, on a loop, while a setting is being chosen: one clip
@@ -107,13 +126,14 @@ export function useTimeline(): { items: TimelineItem[]; total: number; chunks: C
     const items = clips.map((clip, index) => {
       const start = acc
       acc += clip.durationMs / 1000
+      const imageId = sceneImageId(clip), videoId = sceneVideoId(clip)
       return {
         clip,
         index,
         start,
         end: acc,
-        image: clip.imageAssetId ? (assets[clip.imageAssetId] ?? null) : null,
-        video: clip.videoAssetId ? (assets[clip.videoAssetId] ?? null) : null,
+        image: imageId ? (assets[imageId] ?? null) : null,
+        video: videoId ? (assets[videoId] ?? null) : null,
         audio: clip.audioAssetId ? (assets[clip.audioAssetId] ?? null) : null
       }
     })
@@ -146,114 +166,73 @@ export function itemAt(items: TimelineItem[], t: number): number {
   return i === -1 ? items.length - 1 : i
 }
 
-const dbToGain = (db: number): number => Math.pow(10, db / 20)
-
-/**
- * Drives the clock and keeps narration and music audio in step with it. An audio element cannot play louder
- * than its file, so when a volume is raised above 0 dB everything is scaled down together: the preview gets
- * quieter overall but keeps the balance the export will have.
- */
-export function usePlaybackEngine(
-  items: TimelineItem[],
-  total: number,
-  music: Asset | null,
-  musicDb: number,
-  duck: boolean,
-  voiceDb = 0,
-  musicRange: { startSec: number; endSec: number; inSec: number } = { startSec: 0, endSec: Infinity, inSec: 0 }
-): void {
-  const voices = useRef(new Map<string, HTMLAudioElement>())
-  const musicEl = useRef<HTMLAudioElement | null>(null)
+/** Preview plays the exact cached mix used by FFmpeg export. */
+export function usePlaybackEngine(items: TimelineItem[], total: number): { preparing: boolean; error: string | null } {
+  const project = useProject(s => s.project)
+  const assets = useProject(s => s.assets)
+  const [status, setStatus] = useState<{ preparing: boolean; error: string | null }>({ preparing: false, error: null })
+  const audio = useRef<HTMLAudioElement | null>(null)
+  const key = JSON.stringify([project?.id, soundPlanKey(items.map(it => it.clip), Object.values(assets)), items.map(it => [it.clip.id, it.clip.durationMs, it.clip.audioAssetId, it.clip.voiceInMs, it.clip.voiceOutMs, it.clip.voiceStartMs, it.clip.voiceGainDb]),
+    project?.editor.soundDesign, project?.editor.musicAssetId, project?.editor.musicVolumeDb, project?.editor.musicStartMs,
+    project?.editor.musicEndMs, project?.editor.musicInMs, project?.editor.voiceVolumeDb, project?.editor.duckMusic, project?.editor.normalizeAudio,
+    Object.values(assets).filter(a => a.kind === 'audio' || a.kind === 'music' || a.kind === 'sfx').map(a => [a.id, a.localPath, a.durationMs, a.meta])])
+  useEffect(() => {
+    let disposed = false
+    audio.current?.pause(); audio.current = null
+    usePlayback.setState({ audioReady: false })
+    setStatus({ preparing: true, error: null })
+    const timer = setTimeout(() => { void (async () => {
+      try {
+        const state = useProject.getState()
+        await state.flush()
+        if (disposed) return
+        if (useProject.getState().saveState === 'error') throw new Error(useProject.getState().saveError ?? 'Proyek gagal disimpan')
+        const { bundle, job } = await waitForStudioJob(project!.id, () => window.api.audio.prepare(project!.id, crypto.randomUUID()), () => disposed)
+        if (disposed) return
+        const asset = bundle.assets.find(a => a.id === job?.resultAssetId)
+        if (!asset) throw new Error('Mix audio tidak ditemukan')
+        const el = new Audio(asset.url)
+        el.preload = 'auto'
+        audio.current = el
+        usePlayback.setState({ audioReady: true })
+        el.onerror = () => { usePlayback.getState().pause(); setStatus({ preparing: false, error: 'Mix audio gagal dimuat' }) }
+        setStatus({ preparing: false, error: null })
+      } catch (e) {
+        if (!disposed) { usePlayback.getState().pause(); setStatus({ preparing: false, error: errorText(e) }) }
+      }
+    })() }, 450)
+    return () => { disposed = true; clearTimeout(timer); audio.current?.pause(); audio.current = null }
+  }, [key])
 
   useEffect(() => {
-    const map = voices.current
-    const keep = new Set<string>()
-    for (const it of items) {
-      if (!it.audio) continue
-      const key = `${it.clip.id}|${it.audio.id}`
-      keep.add(key)
-      if (!map.has(key)) {
-        const a = new Audio(it.audio.url)
-        a.preload = 'auto'
-        map.set(key, a)
+    let frame = 0, pending = false, disposed = false
+    const tick = (): void => {
+      const state = usePlayback.getState(), el = audio.current
+      if (el) {
+        if (state.t >= total && state.playing) { usePlayback.setState({ playing: false }) }
+        else if (el.ended && state.playing) { usePlayback.setState({ t: total, playing: false }) }
+        else if (!state.playing) { el.pause(); if (Math.abs(el.currentTime-state.t) > .02) el.currentTime=state.t }
+        else if (el.paused && !pending) {
+          el.currentTime = state.t
+          pending = true
+          void el.play().then(() => { if (disposed || !usePlayback.getState().playing) el.pause() }).catch(e => {
+            if (!disposed) { usePlayback.getState().pause(); setStatus({ preparing: false, error: errorText(e) }) }
+          }).finally(() => { pending = false })
+        } else if (!pending) {
+          if (Math.abs(el.currentTime-state.t) > .3) el.currentTime=state.t
+          usePlayback.setState({ t: Math.min(total, el.currentTime), playing: !el.ended && el.currentTime < total })
+        }
       }
+      frame = requestAnimationFrame(tick)
     }
-    for (const [id, a] of map) {
-      if (!keep.has(id)) {
-        a.pause()
-        map.delete(id)
-      }
-    }
-  }, [items])
-
-  useEffect(() => {
-    musicEl.current?.pause()
-    if (!music) {
-      musicEl.current = null
-      return
-    }
-    const m = new Audio(music.url)
-    m.loop = true
-    m.preload = 'auto'
-    musicEl.current = m
-    return () => m.pause()
-  }, [music?.id])
-
-  useEffect(() => {
-    let raf = 0
-    let last = performance.now()
-    const voiceGain = (it: TimelineItem): number => dbToGain(voiceDb + (it.clip.voiceGainDb ?? 0))
-    const loudest = Math.max(1, dbToGain(musicDb), ...items.filter((it) => it.audio).map(voiceGain))
-    const sync = (t: number, playing: boolean): void => {
-      let voiceActive = false
-      items.forEach((it) => {
-        const w = voiceWindow(it)
-        if (!w || !it.audio) return
-        const a = voices.current.get(`${it.clip.id}|${it.audio.id}`)
-        if (!a) return
-        a.volume = Math.min(1, voiceGain(it) / loudest)
-        // The voice as trimmed and placed in its clip; it stops at the clip's end.
-        const target = w.inSec + (t - w.from)
-        if (playing && t >= w.from && t < w.to) {
-          voiceActive = true
-          if (a.paused) {
-            a.currentTime = target
-            void a.play().catch(() => {})
-          } else if (Math.abs(a.currentTime - target) > 0.3) a.currentTime = target
-        } else if (!a.paused) a.pause()
-      })
-      const m = musicEl.current
-      if (m) {
-        m.volume = Math.min(1, (dbToGain(musicDb) * (duck && voiceActive ? 0.35 : 1)) / loudest)
-        if (playing && t >= musicRange.startSec && t < musicRange.endSec) {
-          const raw = musicRange.inSec + (t - musicRange.startSec)
-          const target = m.duration ? raw % m.duration : raw
-          if (m.paused) {
-            m.currentTime = target
-            void m.play().catch(() => {})
-          } else if (Math.abs(m.currentTime - target) > 0.4 && m.duration - Math.abs(m.currentTime - target) > 0.4) m.currentTime = target
-        } else if (!m.paused) m.pause()
-      }
-    }
-    const tick = (now: number): void => {
-      const s = usePlayback.getState()
-      if (s.playing) {
-        const t = s.t + (now - last) / 1000
-        if (t >= total) usePlayback.setState({ t: total, playing: false })
-        else usePlayback.setState({ t })
-      }
-      last = now
-      const st = usePlayback.getState()
-      sync(st.t, st.playing)
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => {
-      cancelAnimationFrame(raf)
-      for (const a of voices.current.values()) a.pause()
-      musicEl.current?.pause()
-    }
-  }, [items, total, musicDb, duck, voiceDb, musicRange.startSec, musicRange.endSec, musicRange.inSec])
-
+    const unsubscribe = usePlayback.subscribe((s,p) => {
+      if (!audio.current) return
+      if (!s.playing) audio.current.pause()
+      if (Math.abs(s.t-p.t) > .15) audio.current.currentTime = s.t
+    })
+    frame = requestAnimationFrame(tick)
+    return () => { disposed = true; cancelAnimationFrame(frame); unsubscribe(); audio.current?.pause() }
+  }, [total])
   useEffect(() => () => usePlayback.setState({ playing: false }), [])
+  return status
 }

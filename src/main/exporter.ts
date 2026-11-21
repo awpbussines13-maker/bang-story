@@ -19,14 +19,18 @@ import {
   type ResolvedCaption
 } from '@shared/captions'
 import { cameraPerspective, TRANSITIONS, transitionSecOf } from '@shared/motion'
-import { clipCaptionWords, musicSpan, voiceSpan } from '@shared/timeline'
+import { clipCaptionWords } from '@shared/timeline'
 import { anchorOffset, contrastColor, overlayEnd, textEffects } from '@shared/overlays'
 import type { Asset, Clip, ExportOptions, ImageOverlay, Job, ProjectBundle, TextOverlay } from '@shared/types'
 import { emit } from './events'
+import { audioInputHash, prepareAudioMix } from './soundDesign'
 import { runJob, type TaskCtx } from './jobs'
 import { fontChain } from './fontMetrics'
 import { assetAbsPath, binPath, dataDir, fontsDir } from './paths'
-import { getBundle, insertJob, touchProject } from './repo'
+import { getBundle, insertJob, touchProject, updateEditorSettings } from './repo'
+import { videoGroups, videoJoinGraph, type VideoPart } from './exportVideo'
+import { sceneImageFit, sceneImageId, sceneVideoId } from '@shared/flowV2'
+import { assertCharacterConsistency } from './characterConsistency'
 
 function ffmpegPath(): string {
   if (!ffmpegStatic) throw new Error('FFmpeg tidak ditemukan di aplikasi')
@@ -42,7 +46,7 @@ function outputSize(aspect: '16:9' | '9:16', res: ExportOptions['resolution']): 
 /** Runs ffmpeg in `cwd`, reporting progress from its `time=` output against `totalSec`. */
 function runFfmpeg(args: string[], cwd: string, signal: AbortSignal, totalSec?: number, onProgress?: (f: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
-    const p = spawn(ffmpegPath(), ['-hide_banner', '-y', ...args], { cwd, windowsHide: true })
+    const p = spawn(ffmpegPath(), ['-hide_banner', '-y', '-filter_threads', '2', '-filter_complex_threads', '2', ...args], { cwd, windowsHide: true })
     let tail = ''
     const onAbort = (): void => {
       p.kill('SIGKILL')
@@ -57,11 +61,11 @@ function runFfmpeg(args: string[], cwd: string, signal: AbortSignal, totalSec?: 
       }
     })
     p.on('error', reject)
-    p.on('close', (code) => {
+    p.on('close', (code, killedBy) => {
       signal.removeEventListener('abort', onAbort)
       if (signal.aborted) return reject(new Error('Dibatalkan'))
       if (code === 0) resolve()
-      else reject(new Error(`FFmpeg gagal (kode ${code}): ${tail.split('\n').slice(-6).join(' ').trim()}`))
+      else reject(new Error(`FFmpeg gagal (${killedBy ? 'sinyal ' + killedBy : 'kode ' + code}): ${tail.split('\n').slice(-6).join(' ').trim()}`))
     })
   })
 }
@@ -312,10 +316,10 @@ function workSize(srcW: number | null | undefined, srcH: number | null | undefin
 }
 
 /** Scale and crop to the work size, the camera move, then down to the output size. */
-function cameraChain(cam: string | null, work: { w: number; h: number }, size: { w: number; h: number }, between: string[] = []): string {
+function cameraChain(cam: string | null, work: { w: number; h: number }, size: { w: number; h: number }, between: string[] = [], fit: 'cover' | 'contain' = 'cover'): string {
   return [
-    `scale=${work.w}:${work.h}:force_original_aspect_ratio=increase:flags=lanczos`,
-    `crop=${work.w}:${work.h}`,
+    `scale=${work.w}:${work.h}:force_original_aspect_ratio=${fit === 'contain' ? 'decrease' : 'increase'}:flags=lanczos`,
+    fit === 'contain' ? `pad=${work.w}:${work.h}:(ow-iw)/2:(oh-ih)/2:black` : `crop=${work.w}:${work.h}`,
     'setsar=1',
     ...between,
     ...(cam ? [cam] : []),
@@ -344,7 +348,7 @@ async function renderSegment(
   const out = `seg_${String(index).padStart(3, '0')}.mp4`
   const len = seg.own + seg.overlap + seg.pad
   const frames = Math.max(1, Math.round(len * opts.fps))
-  const video = clip.motionType === 'video' ? assetOf(bundle, clip.videoAssetId) : undefined
+  const video = assetOf(bundle, sceneVideoId(clip))
   const enc = ['-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-pix_fmt', 'yuv420p', '-r', String(opts.fps)]
   if (video) {
     const cam = cameraPerspective(clip.videoCamera, clip.videoStrength, Math.max(2, Math.round(seg.own * opts.fps)), opts.fps)
@@ -355,23 +359,18 @@ async function renderSegment(
     await runFfmpeg([...from, '-i', assetAbsPath(bundle.project.id, video.localPath), '-vf', vf, '-t', len.toFixed(3), ...enc, out], tmp, signal)
     return out
   }
-  const image = assetOf(bundle, clip.imageAssetId)
+  const image = assetOf(bundle, sceneImageId(clip))
   if (!image) throw new Error(`Klip ${String(index + 1).padStart(2, '0')} (“${clip.title}”) belum punya gambar.`)
   const ownFrames = Math.max(2, Math.round(seg.own * opts.fps))
   const cam = cameraPerspective(clip.cameraPreset, clip.motionStrength, ownFrames, opts.fps)
-  const vf = cameraChain(cam, cam ? workSize(image.width, image.height, size) : size, size)
+  const vf = cameraChain(cam, cam ? workSize(image.width, image.height, size) : size, size, [], sceneImageFit(clip))
   await runFfmpeg(
     [
-      '-loop',
-      '1',
-      '-framerate',
-      String(opts.fps),
-      '-t',
-      len.toFixed(3),
+      ...(clip.importedImageAssetId ? [] : ['-loop', '1', '-framerate', String(opts.fps), '-t', len.toFixed(3)]),
       '-i',
       assetAbsPath(bundle.project.id, image.localPath),
       '-vf',
-      vf,
+      clip.importedImageAssetId ? `loop=loop=-1:size=1:start=0,setpts=N/(${opts.fps}*TB),fps=${opts.fps},${vf}` : vf,
       '-frames:v',
       String(frames),
       ...enc,
@@ -384,6 +383,7 @@ async function renderSegment(
 }
 
 async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOptions): Promise<string> {
+  const mix = await prepareAudioMix(projectId, ctx.signal, (p, m) => ctx.progress(p * 0.04, m))
   const bundle = getBundle(projectId)
   if (!bundle.clips.length) throw new Error('Proyek belum punya klip')
   const size = outputSize(bundle.project.aspectRatio, opts.resolution)
@@ -406,6 +406,33 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
       }
     }
     await Promise.all([worker(), worker()])
+
+    // A single 54-input xfade graph exhausted a shared 8 GB host. Merge at most eight
+    // inputs per pass, keeping the final clip's overlap/padding for the next boundary.
+    let videoParts: VideoPart[] = segs.map((seg, i) => ({ ...seg, file: files[i] }))
+    let level = 0
+    while (videoParts.length > 8) {
+      const groups = videoGroups(videoParts)
+      const combined: VideoPart[] = []
+      for (let i = 0; i < groups.length; i++) {
+        const group = groups[i]
+        const last = group[group.length - 1]
+        const own = group.reduce((sum, part) => sum + part.own, 0)
+        const file = `group_${level}_${i}.mp4`
+        const joinGraph = videoJoinGraph(group)
+        await runFfmpeg([
+          ...group.flatMap((part) => ['-threads', '1', '-i', part.file]),
+          '-filter_complex', joinGraph.filters.length ? joinGraph.filters.join(';') : '[0:v]null[joined]',
+          '-map', joinGraph.filters.length ? joinGraph.output : '[joined]',
+          '-an', '-c:v', 'libx264', '-threads', '2', '-preset', 'veryfast', '-crf', '17',
+          '-pix_fmt', 'yuv420p', '-r', String(opts.fps), '-t', (own + last.overlap + last.pad).toFixed(6), file
+        ], tmp, ctx.signal)
+        combined.push({ file, start: group[0].start, own, overlap: last.overlap, pad: last.pad, transition: last.transition })
+        ctx.progress(0.63 + 0.1 * ((i + 1) / groups.length), `Menggabungkan bagian video ${i + 1} dari ${groups.length}`)
+      }
+      videoParts = combined
+      level++
+    }
 
     // 2. captions
     const style = resolveCaption(bundle.project.editor)
@@ -443,14 +470,11 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
 
     // 3. one ffmpeg pass: transitions + captions + audio mix
     const args: string[] = []
-    files.forEach((f) => args.push('-i', f))
-    const graph: string[] = []
-    let v = '[0:v]'
-    segs.slice(0, -1).forEach((s, i) => {
-      const label = `[x${i}]`
-      graph.push(`${v}[${i + 1}:v]xfade=transition=${s.transition}:duration=${s.overlap.toFixed(6)}:offset=${segs[i + 1].start.toFixed(6)}${label}`)
-      v = label
-    })
+    // Bound decoder frame pools when a long story opens dozens of video inputs.
+    videoParts.forEach((part) => args.push('-threads', '1', '-i', part.file))
+    const joined = videoJoinGraph(videoParts)
+    const graph = joined.filters
+    let v = joined.output
     // Logos and watermarks sit on the picture, under captions and overlay text.
     images.forEach(({ o, asset }, k) => {
       args.push('-i', assetAbsPath(projectId, asset.localPath))
@@ -460,65 +484,14 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
       const x = Math.round(o.x * size.w - ax * iw)
       const y = Math.round(o.y * size.h - ay * ih)
       const end = overlayEnd(o, total)
-      graph.push(`[${files.length + k}:v]format=rgba,scale=${iw}:${ih},colorchannelmixer=aa=${o.opacity.toFixed(2)}[ov${k}]`)
+      graph.push(`[${videoParts.length + k}:v]format=rgba,scale=${iw}:${ih},colorchannelmixer=aa=${o.opacity.toFixed(2)}[ov${k}]`)
       graph.push(`${v}[ov${k}]overlay=x=${x}:y=${y}:enable='between(t,${o.start.toFixed(3)},${end.toFixed(3)})'[vo${k}]`)
       v = `[vo${k}]`
     })
     graph.push(`${v}${useAss ? 'ass=captions.ass:fontsdir=fonts,' : ''}format=yuv420p[vout]`)
 
-    let inputIndex = files.length + images.length
-    const voices: string[] = []
-    segs.forEach((s, i) => {
-      const audio = assetOf(bundle, s.clip.audioAssetId)
-      if (!audio) return
-      // The voice as trimmed on the timeline, placed in its clip, and cut (with a short fade) at the clip's end.
-      const span = voiceSpan(s.clip, audio.durationMs ?? UNKNOWN_AUDIO_MS)
-      if (span.playMs <= 0) return
-      args.push('-i', assetAbsPath(projectId, audio.localPath))
-      const ms = Math.round(s.start * 1000 + span.startMs)
-      const cut = span.playMs < span.lengthMs ? `,afade=t=out:st=${Math.max(0, span.playMs / 1000 - 0.06).toFixed(3)}:d=0.06` : ''
-      // Narration volume: for all clips plus this clip's own adjustment.
-      const db = (bundle.project.editor.voiceVolumeDb ?? 0) + (s.clip.voiceGainDb ?? 0)
-      const gain = Math.abs(db) > 0.01 ? `volume=${db.toFixed(2)}dB,` : ''
-      graph.push(
-        `[${inputIndex}:a]atrim=start=${(span.inMs / 1000).toFixed(3)}:end=${((span.inMs + span.playMs) / 1000).toFixed(3)},asetpts=PTS-STARTPTS${cut},aresample=48000,aformat=channel_layouts=stereo,${gain}adelay=${ms}|${ms}[a${i}]`
-      )
-      voices.push(`[a${i}]`)
-      inputIndex++
-    })
-    const music = assetOf(bundle, bundle.project.editor.musicAssetId)
-    let aout: string | null = null
-    if (voices.length) {
-      graph.push(`${voices.join('')}amix=inputs=${voices.length}:normalize=0:dropout_transition=0[voice]`)
-      aout = '[voice]'
-    }
-    if (music) {
-      // The music's stretch of the timeline: it starts `inSec` into the song, loops if needed and fades out.
-      const span = musicSpan(bundle.project.editor, total)
-      const len = span.endSec - span.startSec
-      const delay = Math.round(span.startSec * 1000)
-      args.push('-stream_loop', '-1', '-i', assetAbsPath(projectId, music.localPath))
-      graph.push(
-        `[${inputIndex}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=start=${span.inSec.toFixed(3)},asetpts=PTS-STARTPTS,atrim=0:${len.toFixed(3)},volume=${bundle.project.editor.musicVolumeDb}dB,afade=t=out:st=${Math.max(0, len - 2).toFixed(3)}:d=${Math.min(2, len).toFixed(3)}${delay ? `,adelay=${delay}|${delay}` : ''}[mus]`
-      )
-      inputIndex++
-      if (aout) {
-        if (opts.duckMusic) {
-          graph.push('[voice]asplit=2[v1][v2]')
-          graph.push('[mus][v2]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=500[duck]')
-          graph.push('[v1][duck]amix=inputs=2:normalize=0:dropout_transition=0[mix]')
-        } else {
-          graph.push('[voice][mus]amix=inputs=2:normalize=0:dropout_transition=0[mix]')
-        }
-        aout = '[mix]'
-      } else aout = '[mus]'
-    }
-    if (aout) {
-      // loudnorm works at 192 kHz internally, so resample back to 48 kHz afterwards.
-      graph.push(`${aout}${opts.normalizeAudio ? 'loudnorm=I=-14:LRA=11:TP=-1.5,' : ''}aresample=48000,apad,atrim=0:${total.toFixed(3)}[aout]`)
-    } else {
-      graph.push(`anullsrc=r=48000:cl=stereo,atrim=0:${total.toFixed(3)}[aout]`)
-    }
+    args.push('-i', assetAbsPath(projectId, mix.localPath))
+    graph.push(`[${videoParts.length + images.length}:a]apad,atrim=0:${total.toFixed(3)}[aout]`)
     writeFileSync(join(tmp, 'graph.txt'), graph.join(';\n'), 'utf8')
 
     // ffmpeg runs with cwd = tmp, so a relative folder would be created inside the temp dir
@@ -529,7 +502,7 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
     let outPath = join(folder, `${base}.mp4`)
     for (let n = 2; existsSync(outPath); n++) outPath = join(folder, `${base}-${n}.mp4`)
 
-    ctx.progress(0.64, 'Menggabungkan klip, suara, dan caption')
+    ctx.progress(0.74, 'Menggabungkan klip, suara, dan caption')
     await runFfmpeg(
       [
         ...args,
@@ -541,6 +514,8 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
         '[aout]',
         '-c:v',
         'libx264',
+        '-threads',
+        '2',
         '-preset',
         'medium',
         '-crf',
@@ -562,8 +537,9 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
       tmp,
       ctx.signal,
       total,
-      (f) => ctx.progress(0.64 + 0.34 * f, 'Menggabungkan klip, suara, dan caption')
+      (f) => ctx.progress(0.74 + 0.24 * f, 'Menggabungkan klip, suara, dan caption')
     )
+    if (audioInputHash(getBundle(projectId)) !== mix.meta.inputHash) throw new Error('Audio berubah selama ekspor. Hasil lama tidak diterapkan; ekspor ulang.')
     if (opts.writeSrt && chunks.length) writeFileSync(outPath.replace(/\.mp4$/i, '.srt'), buildSrt(chunks), 'utf8')
     return outPath
   } finally {
@@ -572,10 +548,13 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
 }
 
 export function startExport(projectId: string, opts: ExportOptions): Job {
-  const job = insertJob({ projectId, kind: 'export', provider: 'ffmpeg', payload: { ...opts } })
+  updateEditorSettings(projectId, { normalizeAudio: opts.normalizeAudio, duckMusic: opts.duckMusic })
+  const characterSnapshot = assertCharacterConsistency(projectId)
+  const job = insertJob({ projectId, kind: 'export', provider: 'ffmpeg', payload: { ...opts, characterSnapshot } })
   emit.job(job)
   return runJob(job, 'export', async (ctx) => {
     const out = await renderProject(ctx, projectId, opts)
+    if (assertCharacterConsistency(projectId) !== characterSnapshot) throw new Error('Gambar atau referensi berubah selama export. File lama dipertahankan, tetapi belum disetujui untuk publikasi.')
     touchProject(projectId, { status: 'exported' })
     return { message: out }
   })

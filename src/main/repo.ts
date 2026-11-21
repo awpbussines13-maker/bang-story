@@ -1,6 +1,7 @@
+import { makeReferencePrompt } from '@shared/flowV2'
 import { randomUUID } from 'node:crypto'
-import { cpSync, existsSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { cpSync, existsSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import type {
   Asset,
   AssetKind,
@@ -21,6 +22,7 @@ import { visualSourceOf } from '@shared/script'
 import { getDb } from './db'
 import { assetUrl, projectDir, projectsRoot } from './paths'
 import { getSettings } from './settings'
+import { soundDesignSchema, validateSoundDesign } from '@shared/soundDesign'
 
 export const DEFAULT_EDITOR: EditorSettings = {
   captionStyle: 'karaoke',
@@ -46,6 +48,7 @@ const toProject = (r: Row): Project => ({
   styleId: r.style_id,
   ttsProvider: r.tts_provider,
   ttsVoice: r.tts_voice,
+  imageProvider: r.image_provider ?? undefined,
   imageModel: r.image_model,
   videoModel: r.video_model,
   videoResolution: r.video_resolution ?? null,
@@ -62,7 +65,9 @@ const toCharacter = (r: Row): Character => ({
   projectId: r.project_id,
   name: r.name,
   description: r.description,
+  referencePrompt: r.reference_prompt,
   sheetAssetId: r.sheet_asset_id,
+  referenceImageAssetId: r.reference_image_asset_id,
   sort: r.sort
 })
 
@@ -76,7 +81,7 @@ const toClip = (r: Row): Clip => ({
   visualSource: r.visual_source ?? null,
   narration: r.narration,
   durationMs: r.duration_ms,
-  characterIds: JSON.parse(r.character_ids || '[]'),
+  characterIds: JSON.parse(r.character_ids || '[]') ?? [],
   motionType: r.motion_type,
   cameraPreset: r.camera_preset,
   motionStrength: r.motion_strength,
@@ -90,6 +95,8 @@ const toClip = (r: Row): Clip => ({
   voiceInMs: r.voice_in_ms ?? 0,
   voiceOutMs: r.voice_out_ms ?? null,
   voiceStartMs: r.voice_start_ms ?? 0,
+  importedImageAssetId: r.imported_image_asset_id,
+  imageFit: r.image_fit,
   imageAssetId: r.image_asset_id,
   videoAssetId: r.video_asset_id,
   audioAssetId: r.audio_asset_id
@@ -139,7 +146,10 @@ export function listProjects(): ProjectSummary[] {
       `SELECT p.*,
         (SELECT COUNT(*) FROM clips c WHERE c.project_id = p.id) AS clip_count,
         (SELECT COALESCE(SUM(duration_ms), 0) FROM clips c WHERE c.project_id = p.id) AS total_ms,
-        (SELECT a.local_path FROM assets a WHERE a.id = p.cover_asset_id) AS cover_path
+        (SELECT a.local_path FROM assets a WHERE a.id = p.cover_asset_id) AS cover_path,
+        (SELECT j.message FROM jobs j
+          WHERE j.project_id = p.id AND j.kind = 'export' AND j.status = 'done' AND j.message IS NOT NULL
+          ORDER BY j.updated_at DESC LIMIT 1) AS export_path
        FROM projects p ORDER BY p.updated_at DESC`
     )
     .all() as Row[]
@@ -152,8 +162,29 @@ export function listProjects(): ProjectSummary[] {
     clipCount: r.clip_count,
     totalMs: r.total_ms,
     coverUrl: r.cover_path ? assetUrl(r.id, r.cover_path) : null,
+    hasExport: isAvailableExport(r.export_path),
     updatedAt: r.updated_at
   }))
+}
+
+function isAvailableExport(path: unknown): path is string {
+  if (typeof path !== 'string' || !isAbsolute(path) || extname(path).toLowerCase() !== '.mp4') return false
+  try {
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+export function getLatestExportPath(projectId: string): string | null {
+  const row = getDb()
+    .prepare(
+      `SELECT message FROM jobs
+       WHERE project_id = ? AND kind = 'export' AND status = 'done' AND message IS NOT NULL
+       ORDER BY updated_at DESC LIMIT 1`
+    )
+    .get(projectId) as Row | undefined
+  return isAvailableExport(row?.message) ? row.message : null
 }
 
 export function createProject(input: NewProjectInput): Project {
@@ -163,9 +194,9 @@ export function createProject(input: NewProjectInput): Project {
   const tts = input.ttsProvider ?? s.defaultTtsProvider
   getDb()
     .prepare(
-      `INSERT INTO projects (id, title, synopsis, duration_sec, scene_count, scene_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
+      `INSERT INTO projects (id, title, synopsis, duration_sec, scene_count, scene_sec, language, aspect_ratio, style_id, tts_provider, tts_voice, image_provider,
         image_model, video_model, status, step, editor_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
     )
     .run(
       id,
@@ -179,9 +210,10 @@ export function createProject(input: NewProjectInput): Project {
       input.styleId ?? 'stickman',
       tts,
       tts === 'gemini' ? 'Charon' : '',
+      input.imageProvider ?? null,
       s.imageModel,
       s.videoModel,
-      JSON.stringify(DEFAULT_EDITOR),
+      JSON.stringify({ ...DEFAULT_EDITOR, normalizeAudio: true, soundDesign: { enabled: true, cues: [] } }),
       now,
       now
     )
@@ -226,24 +258,40 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
   const db = getDb()
   const now = Date.now()
   const p = snap.project
+  const previous = getBundle(p.id)
+  const oldCues = new Map(previous.project.editor.soundDesign?.cues.map(c => [c.id, c]) ?? [])
+  if (p.editor.soundDesign) {
+    p.editor.soundDesign = { ...p.editor.soundDesign, cues: soundDesignSchema.parse(p.editor.soundDesign).cues.flatMap(cue => {
+      const clip = snap.clips.find(c => c.id === cue.clipId)
+      const old = oldCues.get(cue.id)
+      const oldClip = previous.clips.find(c => c.id === cue.clipId)
+      if (!old || old.clipId !== cue.clipId || !oldClip) return [cue]
+      if (!clip) return []
+      if (clip.durationMs < oldClip.durationMs && cue.startMs === old.startMs) {
+        return [{ ...cue, startMs: Math.min(cue.startMs, Math.max(0, clip.durationMs - 1)) }]
+      }
+      return [cue]
+    }) }
+  }
+  validateSoundDesign(p.editor, snap.clips, getBundle(p.id).assets)
   db.transaction(() => {
     db.prepare(
       `UPDATE projects SET title = @title, synopsis = @synopsis, duration_sec = @durationSec, scene_count = @sceneCount,
         scene_sec = @sceneSec, language = @language,
-        aspect_ratio = @aspectRatio, style_id = @styleId, tts_provider = @ttsProvider, tts_voice = @ttsVoice,
+        aspect_ratio = @aspectRatio, style_id = @styleId, tts_provider = @ttsProvider, tts_voice = @ttsVoice, image_provider = @imageProvider,
         image_model = @imageModel, video_model = @videoModel, video_resolution = @videoResolution, status = @status, step = @step, editor_json = @editor, updated_at = @now
        WHERE id = @id`
-    ).run({ ...p, editor: JSON.stringify(p.editor), now })
+    ).run({ ...p, imageProvider: p.imageProvider ?? null, editor: JSON.stringify(p.editor), now })
 
     const charIds = snap.characters.map((c) => c.id)
     db.prepare(
       `DELETE FROM characters WHERE project_id = ? AND id NOT IN (${charIds.map(() => '?').join(',') || "''"})`
     ).run(p.id, ...charIds)
     const upChar = db.prepare(
-      `INSERT INTO characters (id, project_id, name, description, sort) VALUES (@id, @projectId, @name, @description, @sort)
-       ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, sort = excluded.sort`
+      `INSERT INTO characters (id, project_id, name, description, sort, reference_prompt) VALUES (@id, @projectId, @name, @description, @sort, @referencePrompt)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, sort = excluded.sort, reference_prompt = excluded.reference_prompt`
     )
-    for (const c of snap.characters) upChar.run({ ...c, projectId: p.id })
+    for (const c of snap.characters) upChar.run({ ...c, projectId: p.id, referencePrompt: c.referencePrompt ?? previous.characters.find(old => old.id === c.id)?.referencePrompt ?? '' })
 
     const clipIds = snap.clips.map((c) => c.id)
     db.prepare(`DELETE FROM clips WHERE project_id = ? AND id NOT IN (${clipIds.map(() => '?').join(',') || "''"})`).run(
@@ -251,13 +299,13 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
       ...clipIds
     )
     const upClip = db.prepare(
-      `INSERT INTO clips (id, project_id, sort, title, story, visual_prompt, narration, duration_ms, character_ids, motion_type,
+      `INSERT INTO clips (id, project_id, sort, title, story, visual_prompt, visual_source, narration, duration_ms, character_ids, motion_type,
          camera_preset, motion_strength, video_prompt, transition, video_camera, video_strength, transition_ms, voice_gain_db,
          media_in_ms, voice_in_ms, voice_out_ms, voice_start_ms)
-       VALUES (@id, @projectId, @sort, @title, @story, @visualPrompt, @narration, @durationMs, @characterIds, @motionType,
+       VALUES (@id, @projectId, @sort, @title, @story, @visualPrompt, @visualSource, @narration, @durationMs, @characterIds, @motionType,
          @cameraPreset, @motionStrength, @videoPrompt, @transition, @videoCamera, @videoStrength, @transitionMs, @voiceGainDb,
          @mediaInMs, @voiceInMs, @voiceOutMs, @voiceStartMs)
-       ON CONFLICT(id) DO UPDATE SET sort = excluded.sort, title = excluded.title, story = excluded.story, visual_prompt = excluded.visual_prompt,
+       ON CONFLICT(id) DO UPDATE SET sort = excluded.sort, title = excluded.title, story = excluded.story, visual_prompt = excluded.visual_prompt, visual_source = excluded.visual_source,
          narration = excluded.narration, duration_ms = excluded.duration_ms, character_ids = excluded.character_ids,
          motion_type = excluded.motion_type, camera_preset = excluded.camera_preset, motion_strength = excluded.motion_strength,
          video_prompt = excluded.video_prompt, transition = excluded.transition, video_camera = excluded.video_camera,
@@ -269,7 +317,8 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
       upClip.run({
         ...c,
         projectId: p.id,
-        characterIds: JSON.stringify(c.characterIds),
+        characterIds: JSON.stringify(c.characterIds ?? []),
+        visualSource: c.visualSource ?? null,
         videoCamera: c.videoCamera ?? 'static',
         videoStrength: c.videoStrength ?? 'halus',
         transitionMs: c.transitionMs ?? null,
@@ -284,8 +333,15 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
 }
 
 export function removeProject(id: string): void {
-  getDb().prepare('DELETE FROM projects WHERE id = ?').run(id)
-  const dir = join(projectsRoot(), id)
+  // Project IDs are UUIDs; reject path-like values before removing stored files.
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id)) throw new Error('ID proyek tidak valid')
+  const db = getDb()
+  if (!db.prepare('SELECT id FROM projects WHERE id = ?').get(id)) throw new Error('Proyek tidak ditemukan')
+  const root = resolve(projectsRoot())
+  const dir = resolve(root, id)
+  if (dirname(dir) !== root) throw new Error('Path proyek tidak valid')
+  if (existsSync(dir) && !realpathSync(dir).startsWith(`${realpathSync(root)}${sep}`)) throw new Error('Path proyek tidak valid')
+  db.prepare('DELETE FROM projects WHERE id = ?').run(id)
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
 }
 
@@ -303,9 +359,9 @@ export function duplicateProject(id: string): ProjectSummary {
   db.transaction(() => {
     const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Row
     db.prepare(
-      `INSERT INTO projects (id, title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
+      `INSERT INTO projects (id, title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice, image_provider,
          image_model, video_model, video_resolution, status, step, cover_asset_id, editor_json, created_at, updated_at)
-       SELECT @newId, @title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
+       SELECT @newId, @title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice, image_provider,
          image_model, video_model, video_resolution, status, step, @cover, editor_json, @now, @now FROM projects WHERE id = @id`
     ).run({ newId, id, title: `${p.title} (salinan)`, cover: mapId(p.cover_asset_id), now })
     for (const a of src.assets) {
@@ -333,21 +389,23 @@ export function duplicateProject(id: string): ProjectSummary {
       )
     }
     for (const c of src.characters) {
-      db.prepare('INSERT INTO characters (id, project_id, name, description, sheet_asset_id, sort) VALUES (?, ?, ?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO characters (id, project_id, name, description, sheet_asset_id, sort, reference_prompt, reference_image_asset_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
         mapId(c.id),
         newId,
         c.name,
         c.description,
         mapId(c.sheetAssetId),
-        c.sort
+        c.sort,
+        c.referencePrompt,
+        mapId(c.referenceImageAssetId)
       )
     }
     for (const c of src.clips) {
       db.prepare(
         `INSERT INTO clips (id, project_id, sort, title, story, visual_prompt, visual_source, narration, duration_ms, character_ids,
            motion_type, camera_preset, motion_strength, video_prompt, transition, image_asset_id, video_asset_id, audio_asset_id,
-           video_camera, video_strength, transition_ms, voice_gain_db, media_in_ms, voice_in_ms, voice_out_ms, voice_start_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           video_camera, video_strength, transition_ms, voice_gain_db, media_in_ms, voice_in_ms, voice_out_ms, voice_start_ms, imported_image_asset_id, image_fit)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         mapId(c.id),
         newId,
@@ -374,10 +432,20 @@ export function duplicateProject(id: string): ProjectSummary {
         c.mediaInMs,
         c.voiceInMs,
         c.voiceOutMs,
-        c.voiceStartMs
+        c.voiceStartMs,
+        mapId(c.importedImageAssetId),
+        c.imageFit
       )
     }
   })()
+  const copiedEditor = { ...src.project.editor }
+  copiedEditor.musicAssetId = mapId(copiedEditor.musicAssetId)
+  copiedEditor.overlays = copiedEditor.overlays.map(o => o.kind === 'image' ? { ...o, id: randomUUID(), assetId: mapId(o.assetId)! } : { ...o, id: randomUUID() })
+  if (copiedEditor.soundDesign) copiedEditor.soundDesign = { ...copiedEditor.soundDesign, planHash: undefined,
+    cues: copiedEditor.soundDesign.cues.map(c => ({ ...c, id: randomUUID(), clipId: mapId(c.clipId)!, assetId: mapId(c.assetId), manual: true })) }
+  db.prepare('UPDATE projects SET editor_json=? WHERE id=?').run(JSON.stringify(copiedEditor), newId)
+  db.prepare('INSERT INTO atm_productions (project_id,workspace_id,skill_id,skill_snapshot,brief,idempotency_key,request_hash,outline_json,outline_hash,created_at,updated_at) SELECT ?,workspace_id,skill_id,skill_snapshot,brief,?,?,outline_json,outline_hash,?,? FROM atm_productions WHERE project_id=?')
+    .run(newId, 'duplicate-' + newId, '', now, now, id)
   const srcDir = join(projectsRoot(), id)
   if (existsSync(srcDir)) cpSync(srcDir, projectDir(newId), { recursive: true })
   return listProjects().find((p) => p.id === newId)!
@@ -390,6 +458,8 @@ export type StoryClip = Omit<
   | 'id'
   | 'projectId'
   | 'sort'
+  | 'importedImageAssetId'
+  | 'imageFit'
   | 'imageAssetId'
   | 'videoAssetId'
   | 'audioAssetId'
@@ -422,12 +492,13 @@ export function replaceStory(
     characters.forEach((c, i) => {
       const id = randomUUID()
       byName.set(c.name.trim().toLowerCase(), id)
-      db.prepare('INSERT INTO characters (id, project_id, name, description, sort) VALUES (?, ?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO characters (id, project_id, name, description, sort, reference_prompt) VALUES (?, ?, ?, ?, ?, ?)').run(
         id,
         projectId,
         c.name,
         c.description,
-        i
+        i,
+        makeReferencePrompt(c.name, c.description)
       )
     })
     clips.forEach((c, i) => {
@@ -476,6 +547,8 @@ export interface ScriptScene {
 export function replaceScript(projectId: string, title: string, scenes: ScriptScene[]): void {
   const db = getDb()
   db.transaction(() => {
+    const editor = getProject(projectId).editor
+    if (editor.soundDesign) db.prepare('UPDATE projects SET editor_json=? WHERE id=?').run(JSON.stringify({ ...editor, soundDesign: { enabled: editor.soundDesign.enabled, cues: [] } }), projectId)
     db.prepare('DELETE FROM clips WHERE project_id = ?').run(projectId)
     const insert = db.prepare(
       `INSERT INTO clips (id, project_id, sort, title, story, narration, duration_ms, character_ids)
@@ -510,12 +583,13 @@ export function applyVisuals(projectId: string, characters: { name: string; desc
       const key = c.name.trim().toLowerCase()
       if (!key || byName.has(key)) continue
       const id = randomUUID()
-      db.prepare('INSERT INTO characters (id, project_id, name, description, sort) VALUES (?, ?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO characters (id, project_id, name, description, sort, reference_prompt) VALUES (?, ?, ?, ?, ?, ?)').run(
         id,
         projectId,
         c.name.trim(),
         c.description,
-        sort++
+        sort++,
+        makeReferencePrompt(c.name, c.description)
       )
       byName.set(key, id)
     }
@@ -558,6 +632,8 @@ export function clipsOf(projectId: string): Clip[] {
 }
 
 const CLIP_COLS: Partial<Record<keyof Clip, string>> = {
+  importedImageAssetId: 'imported_image_asset_id',
+  imageFit: 'image_fit',
   imageAssetId: 'image_asset_id',
   videoAssetId: 'video_asset_id',
   audioAssetId: 'audio_asset_id',
@@ -589,10 +665,10 @@ export function insertClipAfter(afterId: string, c: Clip): void {
     db.prepare(
       `INSERT INTO clips (id, project_id, sort, title, story, visual_prompt, visual_source, narration, duration_ms, character_ids,
          motion_type, camera_preset, motion_strength, video_prompt, transition, image_asset_id, video_asset_id, audio_asset_id,
-         video_camera, video_strength, transition_ms, voice_gain_db, media_in_ms, voice_in_ms, voice_out_ms, voice_start_ms)
+         video_camera, video_strength, transition_ms, voice_gain_db, media_in_ms, voice_in_ms, voice_out_ms, voice_start_ms, imported_image_asset_id, image_fit)
        VALUES (@id, @projectId, @sort, @title, @story, @visualPrompt, @visualSource, @narration, @durationMs, @characterIds,
          @motionType, @cameraPreset, @motionStrength, @videoPrompt, @transition, @imageAssetId, @videoAssetId, @audioAssetId,
-         @videoCamera, @videoStrength, @transitionMs, @voiceGainDb, @mediaInMs, @voiceInMs, @voiceOutMs, @voiceStartMs)`
+         @videoCamera, @videoStrength, @transitionMs, @voiceGainDb, @mediaInMs, @voiceInMs, @voiceOutMs, @voiceStartMs, @importedImageAssetId, @imageFit)`
     ).run({ ...c, projectId: after.projectId, sort: after.sort + 1, characterIds: JSON.stringify(c.characterIds) })
   })()
 }
@@ -666,6 +742,13 @@ export function updateAssetMeta(id: string, meta: AssetMeta): void {
   getDb().prepare('UPDATE assets SET meta_json = ? WHERE id = ?').run(JSON.stringify(meta), id)
 }
 
+export function updateEditorSettings(projectId: string, patch: Partial<EditorSettings>): void {
+  const bundle = getBundle(projectId)
+  const editor = { ...bundle.project.editor, ...patch }
+  validateSoundDesign(editor, bundle.clips, bundle.assets)
+  getDb().prepare('UPDATE projects SET editor_json=?, updated_at=? WHERE id=?').run(JSON.stringify(editor), Date.now(), projectId)
+}
+
 // ---------- jobs ----------
 
 export function insertJob(j: {
@@ -685,6 +768,28 @@ export function insertJob(j: {
     )
     .run(id, j.projectId, j.clipId ?? null, j.characterId ?? null, j.kind, j.provider, JSON.stringify(j.payload ?? {}), now, now)
   return getJob(id)!
+}
+
+export function insertIdempotentStoryJob(projectId: string, provider: string, operation: string, idempotencyKey: string): { job: Job; created: boolean } {
+  const db = getDb()
+  const existing = db.prepare(
+    `SELECT * FROM jobs WHERE project_id = ? AND kind = 'story'
+       AND json_extract(payload_json, '$.agentOperation') = ?
+       AND json_extract(payload_json, '$.idempotencyKey') = ?
+     ORDER BY created_at DESC LIMIT 1`
+  ).get(projectId, operation, idempotencyKey) as Row | undefined
+  if (existing) return { job: toJob(existing), created: false }
+  return {
+    job: insertJob({ projectId, kind: 'story', provider, payload: { agentOperation: operation, idempotencyKey } }),
+    created: true
+  }
+}
+
+export function patchJobPayload(id: string, patch: Record<string, unknown>): void {
+  const row = getDb().prepare('SELECT payload_json FROM jobs WHERE id = ?').get(id) as { payload_json: string } | undefined
+  if (!row) throw new Error('Job not found')
+  const payload = JSON.parse(row.payload_json || '{}') as Record<string, unknown>
+  getDb().prepare('UPDATE jobs SET payload_json = ? WHERE id = ?').run(JSON.stringify({ ...payload, ...patch }), id)
 }
 
 export function getJob(id: string): Job | null {

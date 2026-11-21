@@ -1,3 +1,4 @@
+import { sceneImageFit } from '@shared/flowV2'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import { Pause, Play, SkipBack, SkipForward } from 'lucide-react'
 import {
@@ -71,7 +72,7 @@ function Frame({ item, local, playing, style }: { item: TimelineItem; local: num
           alt=""
           draggable={false}
           className="absolute inset-0 size-full object-cover will-change-transform"
-          style={{ transform: cameraCss(cam) }}
+          style={{ transform: cameraCss(cam), objectFit: sceneImageFit(item.clip), background: item.clip.importedImageAssetId ? '#000' : undefined }}
         />
       ) : (
         <div className="flex size-full items-center justify-center text-sm text-muted">Klip {item.index + 1} belum punya gambar</div>
@@ -241,7 +242,8 @@ export function Player({
   /** The Overlay tab is open: overlays can be selected and dragged. */
   editOverlays: boolean
 }) {
-  const { t, playing, toggle, seek } = usePlayback()
+  const { t, playing: requestedPlaying, audioReady, toggle, seek } = usePlayback()
+  const playing = requestedPlaying && audioReady
   const audition = useAudition((s) => s.audition)
   const stopAudition = useAudition((s) => s.stop)
   const [clock, setClock] = useState(0)
@@ -301,7 +303,7 @@ export function Player({
   }
 
   return (
-    <section ref={stage} className="flex min-h-0 flex-col items-center justify-center gap-3 bg-[#EFEAE2] p-5">
+    <section ref={stage} className="flex h-full min-h-0 flex-col items-center justify-center gap-3 bg-[#EFEAE2] p-5">
       <div
         className="relative overflow-hidden rounded-xl border-[1.5px] border-ink bg-ink"
         style={{ width: box.w, height: box.h }}

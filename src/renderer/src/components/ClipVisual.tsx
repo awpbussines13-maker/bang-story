@@ -1,3 +1,4 @@
+import { sceneImageFit } from '@shared/flowV2'
 import { AlertCircle, Image as ImageIcon } from 'lucide-react'
 import type { Asset, Clip, Job } from '@shared/types'
 import { isRunning } from '../store/project'
@@ -21,13 +22,13 @@ export function ClipVisual({
 }) {
   const running = isRunning(job)
   const failed = job?.status === 'failed' && !image
-  const showVideo = clip.motionType === 'video' && video && playVideo
+  const showVideo = !clip.importedImageAssetId && clip.motionType === 'video' && video && playVideo
   return (
     <div className="absolute inset-0">
       {showVideo ? (
         <video src={video.url} poster={image?.url} className="size-full object-cover" autoPlay loop muted playsInline />
       ) : image ? (
-        <img src={image.url} alt="" className="size-full object-cover" draggable={false} />
+        <img src={image.url} alt="" className="size-full object-cover" style={{ objectFit: sceneImageFit(clip), background: clip.importedImageAssetId ? '#000' : undefined }} draggable={false} />
       ) : running ? null : (
         <div
           className={cx(

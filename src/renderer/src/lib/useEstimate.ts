@@ -7,12 +7,14 @@ export function useEstimate(
   modelId: string,
   aspect: AspectRatio,
   seconds?: number,
-  resolution?: string | null
+  resolution?: string | null,
+  enabled = true
 ): CreditEstimate | null | undefined {
   const [value, setValue] = useState<CreditEstimate | null | undefined>(undefined)
   useEffect(() => {
     let alive = true
     setValue(undefined)
+    if (!enabled) return
     window.api.generate
       .estimate(kind, modelId, aspect, seconds, resolution)
       .then((v) => alive && setValue(v))
@@ -20,7 +22,7 @@ export function useEstimate(
     return () => {
       alive = false
     }
-  }, [kind, modelId, aspect, seconds, resolution])
+  }, [kind, modelId, aspect, seconds, resolution, enabled])
   return value
 }
 

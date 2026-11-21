@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Download, Sparkles } from 'lucide-react'
+import { sceneImageId } from '@shared/flowV2'
 import { needsVisual } from '@shared/script'
 import type { Step } from '@shared/types'
 import { Button, Spinner } from '../../components/ui'
@@ -8,7 +9,7 @@ import { useApp } from '../../store/app'
 import { useProject } from '../../store/project'
 import { EditorStep } from './EditorStep'
 import { ExportDialog } from './ExportDialog'
-import { FlowExportDialog } from './FlowExportDialog'
+import { exportForFlow } from './FlowImages'
 import { IdeaStep } from './IdeaStep'
 import { ProjectHeader } from './ProjectHeader'
 import { ScriptStep } from './ScriptStep'
@@ -18,7 +19,7 @@ export function ProjectPage({ id }: { id: string }) {
   const { load, unload, loaded, project, clips } = useProject()
   const { toast, go } = useApp()
   const [exportOpen, setExportOpen] = useState(false)
-  const [flowExportOpen, setFlowExportOpen] = useState(false)
+  const [flowExporting, setFlowExporting] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -57,7 +58,7 @@ export function ProjectPage({ id }: { id: string }) {
   const done: Step[] = []
   if (clips.length) done.push(1)
   if (clips.length && !clips.some(needsVisual)) done.push(2)
-  if (clips.length && clips.every((c) => c.imageAssetId)) done.push(3)
+  if (clips.length && clips.every(sceneImageId)) done.push(3)
 
   return (
     <div className="flex h-full flex-col">
@@ -65,14 +66,18 @@ export function ProjectPage({ id }: { id: string }) {
         doneSteps={done}
         right={
           <div className="flex items-center gap-2">
-            {clips.length > 0 && clips.some((c) => c.imageAssetId) && (
+            {clips.length > 0 && (
               <Button
                 variant="secondary"
                 icon={<Sparkles className="size-4 text-accent" />}
-                onClick={() => setFlowExportOpen(true)}
-                title="Ekspor gambar & prompt ke Google Flow Automation"
+                disabled={flowExporting}
+                loading={flowExporting}
+                onClick={() => {
+                  setFlowExporting(true)
+                  void exportForFlow(project.id).catch((e) => toast('error', errorText(e))).finally(() => setFlowExporting(false))
+                }}
               >
-                <span className="hidden sm:inline">Google Flow</span>
+                Ekspor untuk Google Flow
               </Button>
             )}
             {project.step === 4 && (
@@ -90,7 +95,6 @@ export function ProjectPage({ id }: { id: string }) {
         {project.step === 4 && <EditorStep />}
       </div>
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
-      <FlowExportDialog open={flowExportOpen} onClose={() => setFlowExportOpen(false)} />
     </div>
   )
 }

@@ -1,5 +1,28 @@
 import type { LlmProvider } from './types'
 
+export const DEFAULT_NINE_ROUTER_IMAGE_MODEL = 'cf/@cf/black-forest-labs/flux-2-klein-9b'
+export const DEFAULT_NINE_ROUTER_IMAGE_CONCURRENCY = 3
+export const MIN_NINE_ROUTER_IMAGE_CONCURRENCY = 1
+export const MAX_NINE_ROUTER_IMAGE_CONCURRENCY = 125
+
+export const isFluxImageModel = (model: string): boolean => /^cf\/@cf\/black-forest-labs\/flux-2-(dev|klein-4b|klein-9b)$/.test(model)
+
+export function isValidThumbnailModel(model: string, provider: 'gemini' | '9router'): boolean {
+  // Cloudflare model IDs include @, unlike the other accepted provider names.
+  if (provider === '9router' && isFluxImageModel(model)) return true
+  return model === model.trim() && (provider === '9router' ? /^[a-zA-Z0-9._/-]{1,100}$/ : /^[a-zA-Z0-9._-]{1,100}$/).test(model)
+}
+
+export const supportsNineRouterImageReferences = (model: string): boolean => model.startsWith('cx/') || isFluxImageModel(model)
+
+export function normalizeNineRouterImageConcurrency(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_NINE_ROUTER_IMAGE_CONCURRENCY
+  return Math.min(
+    MAX_NINE_ROUTER_IMAGE_CONCURRENCY,
+    Math.max(MIN_NINE_ROUTER_IMAGE_CONCURRENCY, Math.trunc(value))
+  )
+}
+
 export const LLM_PROVIDERS: { id: LlmProvider; name: string; note: string; link: string | null; linkLabel: string }[] = [
   {
     id: 'gemini',

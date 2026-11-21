@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { replaceCaptionWords } from '@shared/captions'
 import { overlayEnd } from '@shared/overlays'
-import { musicSpan } from '@shared/timeline'
 import { confirmDialog, cx } from '../../components/ui'
 import { clipNumber, errorText } from '../../lib/format'
 import { useApp } from '../../store/app'
@@ -14,6 +13,8 @@ import {
   usePlayback,
   usePlaybackEngine,
   useTimeline,
+  useSfxUi,
+  removeSfxCue,
   type TimelineItem
 } from './editor/engine'
 import { INSPECTOR_TABS, Inspector, type InspectorTab } from './editor/Inspector'
@@ -27,21 +28,13 @@ export function EditorStep() {
   const [tab, setTab] = useState<InspectorTab>('klip')
   /** The clip whose transition into the next clip the Transisi panel shows. */
   const [transitionId, setTransitionId] = useState<string | null>(null)
+  const selectedSfxId = useSfxUi(s => s.selectedId)
   const selectedOverlayId = useOverlayUi((s) => s.selectedId)
   const selectOverlay = useOverlayUi((s) => s.select)
   const captionSel = useCaptionUi((s) => s.selected)
   const selectCaption = useCaptionUi((s) => s.select)
   const music = project?.editor.musicAssetId ? (assets[project.editor.musicAssetId] ?? null) : null
-  const musicRange = project ? musicSpan(project.editor, total) : undefined
-  usePlaybackEngine(
-    items,
-    total,
-    music,
-    project?.editor.musicVolumeDb ?? -18,
-    project?.editor.duckMusic ?? true,
-    project?.editor.voiceVolumeDb ?? 0,
-    musicRange
-  )
+  const audioStatus = usePlaybackEngine(items, total)
 
   // Keyboard actions use the latest handlers, which are set on every render below.
   const actions = useRef({ split: async (): Promise<void> => {}, remove: async (): Promise<void> => {} })
@@ -57,6 +50,8 @@ export function EditorStep() {
         const s = usePlayback.getState()
         if (!s.playing && s.t >= total - 0.05) s.seek(0)
         s.toggle()
+      } else if (e.key.toLowerCase() === 'r') {
+        usePlayback.getState().seek(0); usePlayback.getState().play()
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         void actions.current.remove()
@@ -100,7 +95,7 @@ export function EditorStep() {
   const sel = selIndex >= 0 ? clips[selIndex] : null
 
   // Every extra overlay row makes the timeline taller, up to about half the window.
-  const timelineHeight = 330 + (Math.max(1, overlayLanes(project.editor.overlays ?? [], total).length) - 1) * 38
+  const timelineHeight = 370 + (Math.max(1, overlayLanes(project.editor.overlays ?? [], total).length) - 1) * 38
 
   // The timeline marks whatever the open panel is editing, so only one thing ever looks selected.
   const selection = ((): TimelineSelection => {
@@ -108,6 +103,7 @@ export function EditorStep() {
     if (tab === 'suara' && selectedClipId) return { kind: 'voice', id: selectedClipId }
     if (tab === 'transisi' && transitionId) return { kind: 'transition', id: transitionId }
     if (tab === 'caption' && captionSel) return { kind: 'caption', key: captionSel.key, from: captionSel.from }
+    if (tab === 'sfx' && selectedSfxId) return { kind: 'sfx', id: selectedSfxId }
     if (tab === 'musik' && music) return { kind: 'music' }
     if (tab === 'overlay' && selectedOverlayId) return { kind: 'overlay', id: selectedOverlayId }
     return null
@@ -167,6 +163,7 @@ export function EditorStep() {
           selectCaption(null)
         }
       } else if (selection.kind === 'music') updateEditor({ musicAssetId: null })
+      else if (selection.kind === 'sfx') removeSfxCue(selection.id)
       else if (selection.kind === 'overlay') removeOverlay(selection.id)
       else if (selection.kind === 'transition') updateClip(selection.id, { transition: 'cut' })
     } catch (e) {
@@ -184,7 +181,8 @@ export function EditorStep() {
     } else if (p.kind === 'caption') {
       if (p.chunk.source) selectCaption({ key: p.chunk.source.key, from: p.chunk.source.from })
       setTab('caption')
-    } else if (p.kind === 'music') setTab('musik')
+    } else if (p.kind === 'sfx') { useSfxUi.getState().select(p.id); setTab('sfx') }
+    else if (p.kind === 'music') setTab('musik')
     else if (p.kind === 'transition') {
       setTransitionId(p.id)
       setTab('transisi')
@@ -218,6 +216,8 @@ export function EditorStep() {
             )
           })}
         </nav>
+        <div className="relative min-h-0">
+        {(audioStatus.preparing || audioStatus.error) && <div role="status" className="absolute inset-x-0 top-0 z-30 bg-surface px-4 py-2 text-sm">{audioStatus.error ?? 'Menyiapkan audio…'}</div>}
         <Player
           items={items}
           total={total}
@@ -227,6 +227,7 @@ export function EditorStep() {
           assets={assets}
           editOverlays={tab === 'overlay'}
         />
+        </div>
         <Inspector tab={tab} clip={sel} index={selIndex} total={total} transitionId={transitionId} />
       </div>
       <Timeline

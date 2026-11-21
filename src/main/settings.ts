@@ -1,4 +1,9 @@
 import { DEFAULT_IMAGE_MODEL, DEFAULT_VIDEO_MODEL, getImageModel, getVideoModel } from '@shared/higgsfield'
+import {
+  DEFAULT_NINE_ROUTER_IMAGE_CONCURRENCY,
+  DEFAULT_NINE_ROUTER_IMAGE_MODEL,
+  normalizeNineRouterImageConcurrency
+} from '@shared/models'
 import type { AppSettings } from '@shared/types'
 import { getDb } from './db'
 
@@ -14,9 +19,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   imageModel: DEFAULT_IMAGE_MODEL,
   videoModel: DEFAULT_VIDEO_MODEL,
   whisperAuto: true,
+  imageReviewEnabled: true,
   nineRouterBaseUrl: 'http://127.0.0.1:20128/v1',
-  nineRouterTtsModel: 'gemini/gemini-3.1-flash-tts-preview',
-  nineRouterImageModel: 'ag/gemini-3.1-flash-image',
+  nineRouterTtsModel: 'gemini/gemini-3.8-flash-tts',
+  nineRouterImageModel: DEFAULT_NINE_ROUTER_IMAGE_MODEL,
+  nineRouterImageConcurrency: DEFAULT_NINE_ROUTER_IMAGE_CONCURRENCY,
   imageProvider: 'higgsfield'
 }
 
@@ -34,10 +41,12 @@ export function getSettings(): AppSettings {
   // Models dropped from the Higgsfield catalog fall back to the defaults.
   out.imageModel = getImageModel(out.imageModel).id
   out.videoModel = getVideoModel(out.videoModel).id
+  out.nineRouterImageConcurrency = normalizeNineRouterImageConcurrency(out.nineRouterImageConcurrency)
   return out
 }
 
 export function setSettings(patch: Partial<AppSettings>): AppSettings {
+  if ('imageReviewEnabled' in patch && typeof patch.imageReviewEnabled !== 'boolean') throw new Error('Pengaturan pemeriksaan gambar harus aktif atau nonaktif.')
   const current = getSettings()
   const stmt = getDb().prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
@@ -45,7 +54,12 @@ export function setSettings(patch: Partial<AppSettings>): AppSettings {
   getDb().transaction(() => {
     for (const [k, v] of Object.entries(patch)) {
       if (!(k in DEFAULT_SETTINGS)) continue
-      const value = k === 'llmModels' ? { ...current.llmModels, ...(v as object) } : v
+      const value =
+        k === 'llmModels'
+          ? { ...current.llmModels, ...(v as object) }
+          : k === 'nineRouterImageConcurrency'
+            ? normalizeNineRouterImageConcurrency(v)
+            : v
       stmt.run(k, JSON.stringify(value))
     }
   })()

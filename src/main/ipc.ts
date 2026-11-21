@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname, join } from 'node:path'
 let electronApp: any, electronBW: any, electronClip: any, electronDialog: any, electronIpc: any, electronShell: any
 try {
@@ -34,7 +34,11 @@ import type {
   WordTiming
 } from '@shared/types'
 import { startExport } from './exporter'
+import { startAudioMix, startSoundPlan } from './soundDesign'
+import { assertLatestExportCharacterApproval, inspectCharacterConsistency, setStyleReference, startCharacterConsistencyReview } from './characterConsistency'
 import { generateFlowData } from './flowExport'
+import { applyFlowZip, buildFlowV2Zip, changeFlowImage, flowExportSummary, importFlowImage, previewFlowZip, setFlowReference } from './flowV2'
+import type { ImageFit } from '@shared/types'
 import {
   estimateCredits,
   forgetEstimates,
@@ -58,6 +62,7 @@ import {
   duplicateProject,
   getAsset,
   getBundle,
+  getLatestExportPath,
   getProject,
   insertAsset,
   listProjects,
@@ -75,6 +80,12 @@ import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
 import * as ninerouter from './services/ninerouter'
 import { generateScript, generateVisuals, generateMusicPrompt } from './story'
+
+import * as atmTasks from './atmTasks'
+import * as atm from './atmRepo'
+import * as atmSources from './atmSources'
+import * as atmGeneration from './atmGeneration'
+import * as atmThumbnail from './atmThumbnail'
 
 type Handler = (...args: any[]) => unknown
 
@@ -118,6 +129,42 @@ function defaultExportFolder(): string {
 }
 
 export function registerIpc(): void {
+  handle('sound:plan', startSoundPlan)
+  handle('sound:assetInfo', (projectId: string, assetId: string, source: string, license: string) => {
+    const asset = getAsset(assetId)
+    if (!asset || asset.projectId !== projectId || asset.kind !== 'sfx') throw new Error('Aset SFX bukan milik proyek ini')
+    if (typeof source !== 'string' || typeof license !== 'string' || !source.trim() || !license.trim() || source.length > 1000 || license.length > 1000) throw new Error('Isi sumber dan lisensi SFX, maksimal 1000 karakter')
+    updateAssetMeta(assetId, { ...asset.meta, source: source.trim(), license: license.trim() })
+    const updated = getAsset(assetId)!
+    emit.asset(updated)
+    return updated
+  })
+  handle('audio:prepare', startAudioMix)
+  atmTasks.recoverAtmTasks()
+  handle('atm:startTask', atmTasks.startAtmTask)
+  handle('atm:task', atmTasks.getAtmTask)
+  handle('atm:cancelTask', atmTasks.cancelAtmTask)
+  handle('atm:list', atm.listAtmWorkspaces)
+  handle('atm:saveWorkspace', atm.saveAtmWorkspace)
+  handle('atm:get', atm.getAtmBundle)
+  handle('atm:saveReference', atm.saveAtmReference)
+  handle('atm:importReference', atmSources.importAtmReference)
+  handle('atm:importChannel', atmSources.importAtmChannel)
+  handle('atm:analyzeReference', atmGeneration.analyzeAtmReference)
+  handle('atm:removeReference', atm.removeAtmReference)
+  handle('atm:analyze', atmGeneration.analyzeAtmWorkspace)
+  handle('atm:saveSkill', atm.saveAtmSkill)
+  handle('atm:activateSkill', atm.activateAtmSkill)
+  handle('atm:createProduction', atm.createAtmProduction)
+  handle('atm:production', atm.getAtmProductionDetail)
+  handle('atm:saveOutline', atmGeneration.saveAuthoredAtmOutline)
+  handle('atm:savePublishingPackage', atmGeneration.saveAuthoredAtmPackage)
+  handle('atm:generatePackage', atmGeneration.generateAtmPackage)
+  handle('atm:savePackage', atmGeneration.patchAtmPackage)
+  handle('atm:generateThumbnail', atmThumbnail.generateAtmThumbnail)
+  handle('atm:importArtwork', atmThumbnail.importAtmArtwork)
+  handle('atm:renderThumbnail', atmThumbnail.renderAtmThumbnail)
+
   handle('projects:list', () => listProjects())
   handle('projects:create', (input: NewProjectInput) => getBundle(createProject(input).id))
   handle('projects:get', (id: string) => getBundle(id))
@@ -129,6 +176,9 @@ export function registerIpc(): void {
   handle('story:musicPrompt', (projectId: string) => generateMusicPrompt(projectId))
   handle('story:visuals', (projectId: string, mode: 'missing' | 'all') => generateVisuals(projectId, mode === 'all' ? 'all' : 'missing'))
 
+  handle('consistency:inspect', (projectId: string) => inspectCharacterConsistency(projectId))
+  handle('consistency:review', (projectId: string, repair: boolean, key?: string) => startCharacterConsistencyReview(projectId, repair, key))
+  handle('consistency:setStyleReference', (projectId: string, assetId: string | null) => setStyleReference(projectId, assetId))
   handle('generate:clipImage', (clipId: string) => generateClipImage(clipId))
   handle('generate:clipVideo', (clipId: string) => generateClipVideo(clipId))
   handle('generate:clipTts', (clipId: string) => generateClipTts(clipId))
@@ -167,31 +217,33 @@ export function registerIpc(): void {
     emit.asset(fresh)
     return fresh
   })
-  handle('assets:pickMusic', async (projectId: string) => {
+  const pickAudio = async (projectId: string, kind: 'music' | 'sfx') => {
     const win = electronBW?.getFocusedWindow?.()
     if (!electronDialog?.showOpenDialog) return null
     const res = await electronDialog.showOpenDialog(win!, {
-      title: 'Pilih musik latar',
+      title: kind === 'sfx' ? 'Pilih efek suara' : 'Pilih musik latar',
       filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'm4a', 'ogg'] }],
       properties: ['openFile']
     })
     if (res.canceled || !res.filePaths[0]) return null
     getProject(projectId)
     const src = res.filePaths[0]
-    const rel = `music/${randomUUID()}${extname(src).toLowerCase()}`
+    const rel = `${kind}/${randomUUID()}${extname(src).toLowerCase()}`
     const abs = assetAbsPath(projectId, rel)
     mkdirSync(dirname(abs), { recursive: true })
     copyFileSync(src, abs)
-    const durationMs = await probeDurationMs(abs).catch(() => null)
+    const durationMs = await probeDurationMs(abs)
     return insertAsset({
       projectId,
-      kind: 'music',
+      kind,
       provider: 'local',
       prompt: src.split(/[\\/]/).pop() ?? 'musik',
       localPath: rel,
       durationMs
     })
-  })
+  }
+  handle('assets:pickMusic', (projectId: string) => pickAudio(projectId, 'music'))
+  handle('assets:pickSfx', (projectId: string) => pickAudio(projectId, 'sfx'))
 
   handle('assets:pickImage', async (projectId: string) => {
     const win = electronBW?.getFocusedWindow?.()
@@ -328,7 +380,26 @@ export function registerIpc(): void {
   handle('export:reveal', (path: string) => {
     if (electronShell?.showItemInFolder) electronShell.showItemInFolder(path)
   })
+  handle('export:downloadProject', (projectId: string) => {
+    assertLatestExportCharacterApproval(projectId)
+    const path = getLatestExportPath(projectId)
+    if (!path) throw new Error('Video MP4 hasil ekspor tidak ditemukan. Ekspor ulang proyek ini.')
+    if (electronShell?.showItemInFolder) electronShell.showItemInFolder(path)
+  })
   handle('export:flowData', (projectId: string) => generateFlowData(projectId))
+  handle('flowImages:exportSummary', flowExportSummary)
+  handle('flowImages:exportZip', async (projectId: string, confirmed: boolean) => {
+    if (!electronDialog?.showSaveDialog) throw new Error('Unduh ZIP dari halaman proyek.')
+    const { fileName, zipBuffer } = await buildFlowV2Zip(projectId, confirmed)
+    const target = await electronDialog.showSaveDialog({ defaultPath: fileName, filters: [{ name: 'ZIP', extensions: ['zip'] }] })
+    if (!target.canceled && target.filePath) writeFileSync(target.filePath, zipBuffer)
+  })
+  handle('flowImages:reference', setFlowReference)
+  handle('flowImages:importImage', importFlowImage)
+  handle('flowImages:importUrl', (projectId: string, clipId: string, url: string, fit: ImageFit) => importFlowImage(projectId, clipId, url, fit, true))
+  handle('flowImages:changeImage', changeFlowImage)
+  handle('flowImages:previewZip', previewFlowZip)
+  handle('flowImages:applyZip', applyFlowZip)
 
   handle('app:version', () => electronApp?.getVersion?.() ?? '1.0.0-web')
   handle('app:copyText', (text: string) => {

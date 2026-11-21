@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowRight, Copy, FolderOpen, MoreHorizontal, Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Copy, Download, FolderOpen, MoreHorizontal, Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { DURATIONS, LANGUAGES, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
 import type { ApiProvider, AppSettings, AspectRatio, KeyStatus, ProjectStatus, ProjectSummary, TtsProvider } from '@shared/types'
@@ -99,13 +99,14 @@ export function Home() {
       return !!k?.configured && k.lastOk !== false
     }
     const issues: { what: string; blocks: string }[] = []
-    if (!ok('higgsfield')) issues.push({ what: 'kunci Higgsfield', blocks: 'gambar' })
+    const imageProvider = appSettings.imageProvider
+    if (!ok(imageProvider)) issues.push({ what: `kunci ${imageProvider === '9router' ? '9Router' : 'Higgsfield'}`, blocks: 'gambar' })
     const llm = appSettings.llmProvider
     if (!ok(llm)) issues.push({ what: `kunci ${llmName(llm)}`, blocks: 'cerita' })
     else if (!appSettings.llmModels[llm]) issues.push({ what: `model ${llmName(llm)}`, blocks: 'cerita' })
     // Narration needs just one working voice service; every project can pick either one.
     const tts = ttsReadiness(keys)
-    if (!tts.gemini.ok && !tts.elevenlabs.ok) issues.push({ what: 'kunci Gemini atau ElevenLabs', blocks: 'suara narator' })
+    if (!tts.gemini.ok && !tts.elevenlabs.ok && !tts['9router'].ok) issues.push({ what: 'koneksi suara narator', blocks: 'suara narator' })
     return issues
   }, [keys, appSettings])
 
@@ -147,6 +148,14 @@ export function Home() {
     }
   }
 
+  const download = async (p: ProjectSummary): Promise<void> => {
+    try {
+      await window.api.exporter.downloadProject(p.id)
+    } catch (e) {
+      toast('error', errorText(e))
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-auto min-h-[64px] shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 sm:px-8 py-3">
@@ -163,6 +172,7 @@ export function Home() {
           />
         </label>
         <div className="hidden sm:block sm:flex-1" />
+        <Button variant="ink" icon={<FolderOpen className="size-[18px]" />} onClick={() => go({ name: 'atm' })}>ATM Studio</Button>
         <Button icon={<SlidersHorizontal className="size-[18px]" />} onClick={() => go({ name: 'settings', back: { name: 'home' } })}>
           Pengaturan
           {setupIssues.length > 0 && <span className="size-2 rounded-full bg-accent" />}
@@ -321,6 +331,9 @@ export function Home() {
                       )}
                       items={[
                         { label: 'Buka', icon: <FolderOpen className="size-4" />, run: () => go({ name: 'project', id: p.id }) },
+                        ...(p.hasExport
+                          ? [{ label: 'Unduh MP4', icon: <Download className="size-4" />, run: () => void download(p) }]
+                          : []),
                         { label: 'Duplikat', icon: <Copy className="size-4" />, run: () => void duplicate(p) },
                         { label: 'Hapus', icon: <Trash2 className="size-4" />, danger: true, run: () => void remove(p) }
                       ]}

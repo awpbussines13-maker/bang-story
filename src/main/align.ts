@@ -13,6 +13,18 @@ export interface Heard {
   end: number
 }
 
+/** Decoder segment ends may extend beyond EOF; captions must fit the actual recording. */
+export function boundWordTimings(words: WordTiming[], total: number): WordTiming[] {
+  const limit = Math.max(0, total)
+  let previous = 0
+  const out = words.map(w => {
+    const start = Math.min(limit, Math.max(previous, Number.isFinite(w.start) ? w.start : 0))
+    previous = start
+    return { ...w, start, end: Math.min(limit, Math.max(start, Number.isFinite(w.end) ? w.end : start)) }
+  })
+  return out.map((w, i) => ({ ...w, end: Math.min(w.end, out[i + 1]?.start ?? limit) }))
+}
+
 const norm = (w: string): string =>
   w
     .normalize('NFD')
@@ -128,5 +140,5 @@ export function alignWords(script: string[], heard: Heard[], total: number): Wor
     const limit = x + 1 < n ? out[x + 1].start : Math.max(total, w.end)
     w.end = Math.max(w.end, Math.min(limit, w.start + 0.3))
   })
-  return out
+  return boundWordTimings(out, total)
 }

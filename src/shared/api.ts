@@ -1,3 +1,6 @@
+import type { FlowImageApi } from './flowV2'
+import type { AtmApi } from './atm'
+import type { CharacterConsistencyStatus } from './characterConsistency'
 import type {
   ApiProvider,
   AspectRatio,
@@ -26,6 +29,19 @@ import type {
 
 /** The typed surface the preload script exposes as `window.api`. */
 export interface StudioApi {
+  flowImages: FlowImageApi
+  sound: {
+    plan(projectId: string, idempotencyKey: string): Promise<Job>
+    assetInfo(projectId: string, assetId: string, source: string, license: string): Promise<Asset>
+  }
+  audio: { prepare(projectId: string, idempotencyKey: string): Promise<Job> }
+  atm: AtmApi
+  consistency: {
+    inspect(projectId: string): Promise<CharacterConsistencyStatus>
+    review(projectId: string, repair: boolean, idempotencyKey?: string): Promise<Job>
+    setStyleReference(projectId: string, assetId: string | null): Promise<CharacterConsistencyStatus>
+  }
+  isDesktop?: true
   projects: {
     list(): Promise<ProjectSummary[]>
     create(input: NewProjectInput): Promise<ProjectBundle>
@@ -70,6 +86,7 @@ export interface StudioApi {
     /** Caption words of a voice clip, after the text was fixed by hand. */
     setWords(assetId: string, words: WordTiming[]): Promise<Asset>
     pickMusic(projectId: string): Promise<Asset | null>
+    pickSfx(projectId: string): Promise<Asset | null>
     /** A logo or watermark image for an overlay. */
     pickImage(projectId: string): Promise<Asset | null>
     /** A custom or externally generated video for a clip. */
@@ -99,6 +116,7 @@ export interface StudioApi {
     defaultFolder(): Promise<string>
     pickFolder(): Promise<string | null>
     reveal(path: string): Promise<void>
+    downloadProject(projectId: string): Promise<void>
     flowData(projectId: string): Promise<FlowExportSummary>
   }
   app: {

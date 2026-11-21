@@ -5,6 +5,8 @@ import { sceneTimingOf, wordsForMs } from '@shared/timing'
 import { getStyle } from '@shared/styles'
 import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, TransitionId } from '@shared/types'
 import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, type SceneVisual } from './repo'
+import { atmStoryContext } from './atmRepo'
+import { getOrCreateAtmOutline } from './atmGeneration'
 import { generateJson } from './services/llm'
 
 const CAMERA_IDS = CAMERA_PRESETS.map((c) => c.id)
@@ -39,7 +41,7 @@ const SCRIPT_SCHEMA = {
           narration: {
             type: 'string',
             description:
-              'Voice-over for this scene in the target language, 10 to 18 spoken words, natural spoken rhythm. May contain one or two English vocal tags in angle brackets.'
+              'Voice-over in the target language, with the word budget requested in the prompt and natural spoken rhythm. May contain one or two English vocal tags in angle brackets.'
           }
         },
         required: ['title', 'story', 'narration']
@@ -55,9 +57,11 @@ interface ScriptPlan {
 }
 
 /** Writes the scene-by-scene script (story and voice-over) that the user reviews before any visuals exist. */
-export async function generateScript(projectId: string): Promise<ProjectBundle> {
+export async function generateScript(projectId: string, signal?: AbortSignal): Promise<ProjectBundle> {
   const project = getProject(projectId)
   if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
+  const outline = await getOrCreateAtmOutline(projectId, signal)
+  const skillContext = atmStoryContext(projectId)
   const lang = languageOf(project.language)
   const timing = sceneTimingOf(project)
   const count = timing.count
@@ -65,13 +69,15 @@ export async function generateScript(projectId: string): Promise<ProjectBundle> 
   const system = [
     'You are a scriptwriter for faceless YouTube storytelling and explainer videos.',
     'You turn an idea into a sequence of short scenes. Each scene has one line of voice-over.',
-    'The first scene is a strong hook. The story has a clear beginning, rising tension and a satisfying ending. The last scene can invite viewers to subscribe.',
+    'The first scene delivers the title promise immediately. The story has a clear beginning, causal rising tension and a satisfying ending. Resolve the story before any optional audience question.',
+    skillContext,
     'Keep facts accurate for history and science topics, and always call each character by the same name.',
     'The narration is voiced by an expressive text-to-speech model. Where it helps the delivery, add a few English vocal tags in angle brackets inside the narration, such as <short pause>, <long pause>, <chuckles>, <sigh>, <gasp> or <whispers>. Use them sparingly, at most one or two per scene, and never other markup.',
     `Write everything in ${lang}, except the vocal tags, which stay in English.`
   ].join(' ')
   const prompt = [
     `Idea / synopsis:\n${project.synopsis}`,
+    outline ? `Approved macro outline (preserve causality, seeded payoff and resource continuity):\n${JSON.stringify(outline)}` : '',
     `Target video length: about ${project.durationSec} seconds.`,
     `Write exactly ${count} scenes.`,
     // The word budget is what actually lands scenes near the pinned length: the voice, and therefore the
@@ -79,7 +85,9 @@ export async function generateScript(projectId: string): Promise<ProjectBundle> 
     `Each scene's narration should be about ${wordsForMs(timing.targetMs)} words, so it is voiced in roughly ${Math.round(timing.targetMs / 1000)} seconds.`
   ].join('\n\n')
 
-  const plan = await generateJson<ScriptPlan>({ system, prompt, schema: SCRIPT_SCHEMA, name: 'script' })
+  signal?.throwIfAborted()
+  const plan = await generateJson<ScriptPlan>({ system, prompt, schema: SCRIPT_SCHEMA, name: 'script', signal })
+  signal?.throwIfAborted()
   const scenes = (plan.scenes ?? []).filter((c) => str(c.narration) || str(c.story))
   if (!scenes.length) throw new Error('Model tidak menghasilkan adegan. Coba lagi atau pilih model lain di Pengaturan.')
 
@@ -250,7 +258,7 @@ function visualText(a: VisualScene): string {
  * Designs one image per scene (plus camera move, transition and AI-video direction) from the reviewed
  * script. "missing" only covers scenes without a plan or whose story changed since; "all" redoes every scene.
  */
-export async function generateVisuals(projectId: string, mode: 'missing' | 'all'): Promise<ProjectBundle> {
+export async function generateVisuals(projectId: string, mode: 'missing' | 'all', signal?: AbortSignal): Promise<ProjectBundle> {
   const project = getProject(projectId)
   const clips = clipsOf(projectId)
   if (!clips.length) throw new Error('Naskah masih kosong. Tambahkan adegan dulu.')
@@ -262,6 +270,7 @@ export async function generateVisuals(projectId: string, mode: 'missing' | 'all'
   const known = charactersOf(projectId)
   const system = [
     'You are the storyboard artist for a faceless YouTube video. The script is final; you design the pictures.',
+    atmStoryContext(projectId),
     'For each requested scene you describe ONE still image, choose the camera move and its strength over that image, the transition into the next scene, and write how the image would move if it is animated as an AI video.',
     'Rules for the image descriptions, which go to a text-to-image model that never sees the script:',
     '1. Every scene is self-contained. Always name the world (planet or country, era, technology) in the setting, even when the story makes it obvious, and add background details that prove it. Without this the model falls back to present-day Earth.',
@@ -285,7 +294,9 @@ export async function generateVisuals(projectId: string, mode: 'missing' | 'all'
     `Allowed camera values: ${CAMERA_IDS.join(', ')}. Allowed strength values: ${STRENGTH_IDS.join(', ')}. Allowed transition values: ${TRANSITION_IDS.join(', ')}.`
   ].join('\n\n')
 
-  const plan = await generateJson<VisualPlan>({ system, prompt, schema: VISUAL_SCHEMA, name: 'visuals' })
+  signal?.throwIfAborted()
+  const plan = await generateJson<VisualPlan>({ system, prompt, schema: VISUAL_SCHEMA, name: 'visuals', signal })
+  signal?.throwIfAborted()
   const answers = (plan.scenes ?? []).filter((s) => str(s.setting) || str(s.action))
   if (!answers.length) throw new Error('Model tidak menghasilkan visual. Coba lagi atau pilih model lain di Pengaturan.')
 
@@ -351,7 +362,7 @@ const MUSIC_SCHEMA = {
 }
 
 /** A prompt for background music that suits the story, to paste into Suno or another music AI. */
-export async function generateMusicPrompt(projectId: string): Promise<MusicPrompt> {
+export async function generateMusicPrompt(projectId: string, signal?: AbortSignal): Promise<MusicPrompt> {
   const b = getBundle(projectId)
   const p = b.project
   const clips = b.clips
@@ -374,7 +385,9 @@ export async function generateMusicPrompt(projectId: string): Promise<MusicPromp
     `Video length: about ${durationSec} seconds.`,
     `Scenes:\n${scenes}`
   ].join('\n\n')
-  const r = await generateJson<Partial<MusicPrompt>>({ system, prompt, schema: MUSIC_SCHEMA, name: 'music' })
+  signal?.throwIfAborted()
+  const r = await generateJson<Partial<MusicPrompt>>({ system, prompt, schema: MUSIC_SCHEMA, name: 'music', signal })
+  signal?.throwIfAborted()
   const out: MusicPrompt = {
     title: str(r.title),
     style: str(r.style),

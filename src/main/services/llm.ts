@@ -1,4 +1,5 @@
 import type { KeyTestResult, LlmProvider, ModelList, ModelOption, ModelSource } from '@shared/types'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { getSecret, PROVIDER_NAMES } from '../secrets'
 import { getSettings, readCache, writeCache } from '../settings'
 import * as eleven from './elevenlabs'
@@ -176,11 +177,7 @@ async function fetchModels(source: ModelSource): Promise<ModelOption[]> {
     case '9router-tts':
       return ninerouter.listTtsModels()
     case '9router-image':
-      return [
-        { id: 'ag/gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image', tags: ['Gambar', 'Rekomendasi'] },
-        { id: 'dall-e-3', name: 'DALL-E 3', tags: ['Gambar'] },
-        { id: 'dall-e-2', name: 'DALL-E 2', tags: ['Gambar'] }
-      ]
+      return ninerouter.listImageModels()
     case 'custom':
       return customModels()
   }
@@ -189,6 +186,7 @@ async function fetchModels(source: ModelSource): Promise<ModelOption[]> {
 function cacheKey(source: ModelSource): string {
   if (source === 'custom') return `models:custom:${getSettings().customBaseUrl.trim()}`
   if (source === '9router') return `models:9router:${getSettings().nineRouterBaseUrl.trim()}`
+  if (source === '9router-image') return `models:9router-image:${getSettings().nineRouterBaseUrl.trim()}`
   return `models:${source}`
 }
 
@@ -315,6 +313,13 @@ export interface ActiveLlm {
   model: string
 }
 
+const taskLlm = new AsyncLocalStorage<ActiveLlm>()
+
+/** Scope a provider choice to one async task without changing another task's or the user's settings. */
+export function withLlmOverride<T>(choice: ActiveLlm | null, run: () => Promise<T>): Promise<T> {
+  return choice ? taskLlm.run(choice, run) : run()
+}
+
 export function activeLlm(): ActiveLlm {
   const s = getSettings()
   return { provider: s.llmProvider, model: s.llmModels[s.llmProvider]?.trim() ?? '' }
@@ -322,8 +327,9 @@ export function activeLlm(): ActiveLlm {
 
 /** Generates a JSON object that follows `schema` with whichever LLM the user made active. */
 export async function generateJson<T>(req: { system: string; prompt: string; schema: object; name: string; signal?: AbortSignal }): Promise<T> {
-  const { provider, model } = activeLlm()
+  const { provider, model } = taskLlm.getStore() ?? activeLlm()
   if (!model) throw new LlmError(`Pilih model ${PROVIDER_NAMES[provider]} dulu di Pengaturan › Kunci API dan model.`)
-  if (provider === 'gemini') return (await gemini.generateJson(model, req.system, req.prompt, req.schema)) as T
+  const signal = req.signal ? AbortSignal.any([req.signal, AbortSignal.timeout(GENERATE_TIMEOUT_MS)]) : AbortSignal.timeout(GENERATE_TIMEOUT_MS)
+  if (provider === 'gemini') return (await gemini.generateJson(model, req.system, req.prompt, req.schema, signal)) as T
   return (await chatJson(compat(provider), model, req.system, req.prompt, req.schema, req.name, req.signal)) as T
 }

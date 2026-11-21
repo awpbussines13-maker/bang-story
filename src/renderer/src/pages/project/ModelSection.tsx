@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Film, Image as ImageIcon, Move, Users } from 'lucide-react'
 import { effectiveResolution, fitDuration, getImageModel, getVideoModel, hfModelOptions, maxRefs, resolutionOptions } from '@shared/higgsfield'
-import type { CreditEstimate, ModelOption, Project } from '@shared/types'
+import { DEFAULT_NINE_ROUTER_IMAGE_MODEL, supportsNineRouterImageReferences } from '@shared/models'
+import type { AppSettings, CreditEstimate, ModelOption, Project } from '@shared/types'
 import { ModelLogo } from '../../components/ModelLogo'
+import { ProviderLogo } from '../../components/ProviderLogo'
 import { ModelPicker } from '../../components/ModelPicker'
 import { Segmented, Spinner } from '../../components/ui'
 import { creditLabel } from '../../lib/format'
@@ -57,22 +59,29 @@ function Card({ icon, title, children }: { icon: ReactNode; title: string; child
   )
 }
 
-/** Which Higgsfield models draw and animate this project's clips. */
+/** Show the same effective image provider used by generation. */
 export function ModelSection({
   project,
+  settings,
+  onOpenSettings,
   clipCount,
   perClip,
   onChange
 }: {
   project: Project
+  settings: AppSettings | null
+  onOpenSettings: () => void
   clipCount: number
   perClip: number
-  onChange: (patch: { imageModel?: string; videoModel?: string; videoResolution?: string | null }) => void
+  onChange: (patch: { imageProvider?: Project['imageProvider']; imageModel?: string; videoModel?: string; videoResolution?: string | null }) => void
 }) {
+  const provider = project.imageProvider ?? settings?.imageProvider
+  const nineRouter = provider === '9router'
+  const imageModel = settings?.nineRouterImageModel || DEFAULT_NINE_ROUTER_IMAGE_MODEL
   const image = getImageModel(project.imageModel)
   const video = getVideoModel(project.videoModel)
   const seconds = fitDuration(video, perClip) ?? perClip
-  const imageCost = useEstimate('image', image.id, project.aspectRatio)
+  const imageCost = useEstimate('image', image.id, project.aspectRatio, undefined, undefined, !!settings && !nineRouter)
   const resolutions = resolutionOptions(video)
   const resolution = effectiveResolution(video, project.videoResolution)
   const videoCost = useEstimate('video', video.id, project.aspectRatio, perClip, resolution)
@@ -82,7 +91,7 @@ export function ModelSection({
     void window.api.settings.keys().then((keys) => setHasKey(!!keys.find((k) => k.provider === 'higgsfield')?.configured))
   }, [])
 
-  const imageCosts = useEstimates('image', IMAGE_IDS, project.aspectRatio, undefined, hasKey === true)
+  const imageCosts = useEstimates('image', IMAGE_IDS, project.aspectRatio, undefined, !!settings && !nineRouter && hasKey === true)
   const videoCosts = useEstimates('video', VIDEO_IDS, project.aspectRatio, perClip, hasKey === true)
   const imageModels = useMemo(() => withCosts(IMAGE_OPTIONS, imageCosts, () => '', hasKey === true), [imageCosts, hasKey])
   const videoModels = useMemo(
@@ -90,27 +99,49 @@ export function ModelSection({
     [videoCosts, perClip, hasKey]
   )
 
+  if (!settings) return <p className="text-sm text-muted">Memuat pengaturan model…</p>
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline gap-2">
         <span className="text-sm font-semibold">Model AI</span>
         <span className="text-[13px] text-muted">
-          {IMAGE_OPTIONS.length} model gambar dan {VIDEO_OPTIONS.length} model video dari Higgsfield
+          Gambar: {nineRouter ? '9Router' : 'Higgsfield'} · Video AI: Higgsfield
         </span>
       </div>
+      {project.imageProvider != null && (
+        <p className="text-[13px] text-ink-2">
+          Penyedia gambar dipilih khusus untuk proyek ini.{' '}
+          <button type="button" className="font-semibold text-accent-dark hover:underline" onClick={() => onChange({ imageProvider: null })}>
+            Ikuti pengaturan ({settings.imageProvider === '9router' ? '9Router' : 'Higgsfield'})
+          </button>
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <Card icon={<ImageIcon className="size-4" />} title="Gambar klip">
-          <ModelPicker
-            value={image.id}
-            models={imageModels}
-            footerNote={hasKey ? 'kredit per gambar, perkiraan Higgsfield untuk akunmu' : undefined}
-            renderIcon={(m) => <ModelLogo family={m.family} />}
-            detail="description"
-            tagFilters={['Rekomendasi', 'Referensi', 'GPT Image', 'Soul', 'Recraft', '4K']}
-            menuClassName="w-[430px]"
-            onChange={(id) => onChange({ imageModel: id })}
-          />
-          {project.imageProvider === '9router' ? (
+          {nineRouter ? (
+            <>
+              <div className="flex min-w-0 items-center gap-2">
+                <ProviderLogo id="9router" size={28} />
+                <span className="break-all text-[13px] font-semibold">{imageModel}</span>
+              </div>
+              <button type="button" className="text-left text-[12.5px] font-semibold text-accent-dark hover:underline" onClick={onOpenSettings}>
+                Atur model 9Router di Pengaturan
+              </button>
+            </>
+          ) : (
+            <ModelPicker
+              value={image.id}
+              models={imageModels}
+              footerNote={hasKey ? 'kredit per gambar, perkiraan Higgsfield untuk akunmu' : undefined}
+              renderIcon={(m) => <ModelLogo family={m.family} />}
+              detail="description"
+              tagFilters={['Rekomendasi', 'Referensi', 'GPT Image', 'Soul', 'Recraft', '4K']}
+              menuClassName="w-[430px]"
+              onChange={(id) => onChange({ imageModel: id })}
+            />
+          )}
+          {nineRouter ? (
             <p className="text-[12.5px] font-semibold text-accent-dark">
               ✓ Menggunakan 9Router Image (tanpa kredit Higgsfield)
             </p>
@@ -127,12 +158,12 @@ export function ModelSection({
           )}
           <p className="flex items-start gap-1.5 text-[12.5px] leading-snug text-muted">
             <Users className="mt-px size-3.5 shrink-0" />
-            {maxRefs(image)
+            {(nineRouter ? supportsNineRouterImageReferences(imageModel) : maxRefs(image))
               ? 'Pakai lembar karakter, jadi wajah dan kostum tokoh tetap sama di tiap klip.'
               : 'Tanpa lembar karakter, jadi tampilan tokoh bisa sedikit berubah antar klip.'}
           </p>
         </Card>
-        <Card icon={<Film className="size-4" />} title="Video AI">
+        <Card icon={<Film className="size-4" />} title="Video AI · Higgsfield">
           <ModelPicker
             value={video.id}
             models={videoModels}

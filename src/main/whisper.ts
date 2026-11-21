@@ -19,6 +19,7 @@ import type { WhisperStatus } from '@shared/types'
 import { alignWords, splitHeard, type Heard } from './align'
 import { emit } from './events'
 import { binPath, dataDir } from './paths'
+import { whisperExecutable } from './whisperPath'
 
 /**
  * Local speech recognition with whisper.cpp (bundled `whisper-cli`) and the multilingual Whisper Small
@@ -41,9 +42,9 @@ export function modelDir(): string {
 const modelPath = (): string => join(modelDir(), MODEL.file)
 
 function cliPath(): string {
-  if (electronApp?.isPackaged) return join(process.resourcesPath, 'whisper', 'whisper-cli.exe')
-  if (electronApp?.getAppPath) return join(electronApp.getAppPath(), 'resources', 'whisper', 'whisper-cli.exe')
-  return join(process.cwd(), 'resources', 'whisper', 'whisper-cli.exe')
+  const resources = electronApp?.isPackaged ? process.resourcesPath
+    : join(electronApp?.getAppPath ? electronApp.getAppPath() : process.cwd(), 'resources')
+  return whisperExecutable(resources, process.platform, process.env.WHISPER_CLI)
 }
 
 let download: { ctrl: AbortController; received: number; phase: 'downloading' | 'verifying' } | null = null
@@ -52,12 +53,13 @@ let lastError: string | null = null
 export function whisperStatus(): WhisperStatus {
   if (download) return { state: download.phase, received: download.received, total: MODEL.bytes, error: null }
   const ready = existsSync(modelPath()) && statSync(modelPath()).size === MODEL.bytes
+  const cliReady = existsSync(cliPath())
   const part = `${modelPath()}.part`
   return {
-    state: ready ? 'ready' : 'missing',
+    state: ready && cliReady ? 'ready' : 'missing',
     received: ready ? MODEL.bytes : existsSync(part) ? statSync(part).size : 0,
     total: MODEL.bytes,
-    error: ready ? null : lastError
+    error: ready && !cliReady ? 'Program Whisper untuk sistem operasi ini belum tersedia.' : ready ? null : lastError
   }
 }
 
@@ -146,12 +148,15 @@ const whisperLanguage = (code: string): string => (code === 'jv' ? 'jw' : code)
 
 function run(file: string, args: string[], signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    const abort = () => p.kill('SIGKILL')
     const p = execFile(file, args, { windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (err, _out, stderr) => {
+      signal?.removeEventListener('abort', abort)
       if (signal?.aborted) return reject(new Error('Dibatalkan'))
-      if (err) return reject(new Error(`Whisper gagal: ${String(stderr).trim().split('\n').slice(-3).join(' ')}`))
+      if (err) return reject(new Error(`Whisper gagal: ${String(stderr).trim().split('\n').slice(-3).join(' ') || err.message}`))
       resolve()
     })
-    signal?.addEventListener('abort', () => p.kill('SIGKILL'), { once: true })
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
   })
 }
 

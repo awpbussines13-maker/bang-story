@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { ConfirmHost } from './components/ui'
 import { Toasts } from './components/Toasts'
+import { AtmStudio } from './pages/AtmStudio'
 import { Home } from './pages/Home'
 import { ProjectPage } from './pages/project/ProjectPage'
 import { Settings } from './pages/Settings'
@@ -12,7 +13,9 @@ const KIND_LABEL: Record<string, string> = {
   sheet: 'Lembar karakter',
   video: 'Video AI',
   tts: 'Suara',
-  export: 'Ekspor'
+  export: 'Ekspor',
+  'sound-plan': 'Rencana SFX',
+  'audio-mix': 'Mix audio'
 }
 
 export function App() {
@@ -26,8 +29,7 @@ export function App() {
         const { toast } = useApp.getState()
         if (job.status === 'failed' && job.error) toast('error', `${KIND_LABEL[job.kind] ?? 'Proses'} gagal: ${job.error}`)
         if (job.status === 'done' && job.kind === 'export' && job.message) {
-          const path = job.message
-          toast('success', 'Video selesai diekspor.', { label: 'Buka folder', run: () => void window.api.exporter.reveal(path) })
+          toast('success', 'Video selesai diekspor.', { label: 'Unduh video', run: () => void window.api.exporter.downloadProject(job.projectId) })
         }
       }),
       window.api.on.clip((e) => p().applyClip(e.clipId, e.patch)),
@@ -54,6 +56,7 @@ export function App() {
   return (
     <>
       {route.name === 'home' && <Home />}
+      {route.name === 'atm' && <AtmStudio initialWorkspaceId={route.workspaceId} initialProjectId={route.projectId} />}
       {route.name === 'settings' && <Settings />}
       {route.name === 'project' && <ProjectPage key={route.id} id={route.id} />}
       <Toasts />

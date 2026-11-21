@@ -7,8 +7,13 @@ services:
     container_name: bang-story-web
     restart: unless-stopped
     network_mode: "host"
+    env_file:
+      - ${BANG_STORY_AUTH_ENV_FILE:-.env.web}
     volumes:
       - ./data:/app/data
+      - ./agent-files:/app/agent-files
     environment:
+      - HOST=127.0.0.1
       - PORT=3009
       - DATA_DIR=/app/data
+      - BANG_STORY_AGENT_FILES_DIR=/app/agent-files

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bot, Play, Sparkles, Square } from 'lucide-react'
 import { getImageModel } from '@shared/higgsfield'
-import { DURATIONS, LANGUAGES, llmName } from '@shared/models'
+import { DEFAULT_NINE_ROUTER_IMAGE_MODEL, DURATIONS, LANGUAGES, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
 import { sceneTimingOf } from '@shared/timing'
-import type { KeyStatus, LlmProvider, TtsProvider, VoiceOption } from '@shared/types'
+import type { AppSettings, KeyStatus, LlmProvider, TtsProvider, VoiceOption } from '@shared/types'
 import { SceneShapeField } from '../../components/SceneShapeField'
 import { Select } from '../../components/Select'
 import { StylePicker } from '../../components/StylePicker'
@@ -41,17 +41,20 @@ function VoicePicker({ provider, value, onChange }: { provider: TtsProvider; val
   const player = usePreviewPlayer()
 
   useEffect(() => {
+    let cancelled = false
     setVoices(null)
     setError(null)
     window.api.settings
       .voices(provider)
       .then((list) => {
+        if (cancelled) return
         // Gemini samples ship with the app; ElevenLabs sends its own preview links.
-        const v = provider === 'gemini' ? list.map((x) => ({ ...x, previewUrl: x.previewUrl ?? geminiPreview(x.id, x.name) })) : list
+        const v = list.map((x) => ({ ...x, previewUrl: x.previewUrl ?? (provider === 'gemini' || (provider === '9router' && x.id.startsWith('gemini/')) ? geminiPreview(x.id, x.name) : null) }))
         setVoices(v)
-        if (!v.some((x) => x.id === value) && v[0]) onChange(v[0].id)
+        if (!value && v[0]) onChange(v[0].id)
       })
-      .catch((e) => setError(errorText(e)))
+      .catch((e) => { if (!cancelled) setError(errorText(e)) })
+    return () => { cancelled = true }
   }, [provider])
 
   const urlOf = (id: string): string | null => voices?.find((v) => v.id === id)?.previewUrl ?? null
@@ -94,7 +97,9 @@ function VoicePicker({ provider, value, onChange }: { provider: TtsProvider; val
           voices
             ? voices.map((v) =>
                 // Gemini tones are short; ElevenLabs labels are longer, so they go on a second line.
-                provider === 'gemini' ? { value: v.id, label: v.name, hint: v.description || undefined } : { value: v.id, label: v.name, note: v.description || undefined }
+                provider === 'gemini' || (provider === '9router' && v.id.startsWith('gemini/'))
+                  ? { value: v.id, label: v.name, hint: v.description || undefined, group: v.group }
+                  : { value: v.id, label: v.name, note: v.description || undefined, group: v.group }
               )
             : [{ value, label: 'Memuat daftar suara…' }]
         }
@@ -107,12 +112,16 @@ function VoicePicker({ provider, value, onChange }: { provider: TtsProvider; val
 export function IdeaStep() {
   const { project, clips, updateProject, flush, load } = useProject()
   const { toast, go } = useApp()
+  const [settings, setSettings] = useState<AppSettings | null>(null)
   const [busy, setBusy] = useState(false)
   const [writer, setWriter] = useState<{ provider: LlmProvider; model: string } | null>(null)
   const [keys, setKeys] = useState<KeyStatus[]>([])
 
   useEffect(() => {
-    void window.api.settings.get().then((s) => setWriter({ provider: s.llmProvider, model: s.llmModels[s.llmProvider] }))
+    void window.api.settings.get().then((s) => {
+      setSettings(s)
+      setWriter({ provider: s.llmProvider, model: s.llmModels[s.llmProvider] })
+    }).catch((e) => toast('error', errorText(e)))
     void window.api.settings.keys().then(setKeys)
   }, [])
 
@@ -134,7 +143,10 @@ export function IdeaStep() {
 
   const clipCount = sceneTimingOf(project).count
   const perClip = Math.round(project.durationSec / clipCount)
-  const model = getImageModel(project.imageModel)
+  const imageProvider = project.imageProvider ?? settings?.imageProvider
+  const imageLabel = !settings ? 'Memuat model…' : imageProvider === '9router'
+    ? `9Router · ${settings.nineRouterImageModel || DEFAULT_NINE_ROUTER_IMAGE_MODEL}`
+    : `Higgsfield · ${getImageModel(project.imageModel).name}`
 
   const compose = async (): Promise<void> => {
     if (!project.synopsis.trim()) {
@@ -286,7 +298,7 @@ export function IdeaStep() {
               </div>
               {blocked.length > 0 && (
                 <span className="text-[13px] text-muted">
-                  {blocked.length === 2
+                  {blocked.length === 3
                     ? 'Belum ada kunci suara narator yang valid, jadi suara belum bisa dibuat.'
                     : `${ready[blocked[0]].reason}, jadi ${TTS_NAMES[blocked[0]]} belum bisa dipilih.`}{' '}
                   <button type="button" onClick={() => void openSettings()} className="font-semibold text-accent-dark hover:underline">
@@ -298,12 +310,15 @@ export function IdeaStep() {
 
             <ModelSection
               project={project}
+              settings={settings}
+              onOpenSettings={() => void openSettings()}
               clipCount={clipCount}
               perClip={perClip}
               onChange={(patch) => {
                 updateProject(patch)
                 // New projects start with the models picked last; resolution stays with this project.
-                if (!('videoResolution' in patch)) void window.api.settings.set(patch)
+                if (patch.imageModel) void window.api.settings.set({ imageModel: patch.imageModel })
+                if (patch.videoModel) void window.api.settings.set({ videoModel: patch.videoModel })
               }}
             />
           </div>
@@ -322,7 +337,7 @@ export function IdeaStep() {
       <footer className="absolute inset-x-0 bottom-0 flex h-[84px] items-center gap-4 border-t border-line bg-surface px-14">
         <div className="flex flex-col gap-0.5">
           <span className="text-[15px] font-semibold">
-            ± {clipCount} adegan · gambar {model.name}
+            ± {clipCount} adegan · gambar {imageLabel}
           </span>
           <span className="flex items-center gap-1.5 text-[13px] text-muted">
             <Bot className="size-3.5" />

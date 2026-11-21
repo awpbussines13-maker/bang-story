@@ -15,6 +15,19 @@ const listen =
   }
 
 const api: StudioApi = {
+  sound: { plan: call('sound:plan'), assetInfo: call('sound:assetInfo') },
+  audio: { prepare: call('audio:prepare') },
+  consistency: { inspect: call('consistency:inspect'), review: call('consistency:review'), setStyleReference: call('consistency:setStyleReference') },
+  atm: {
+    startTask: call('atm:startTask'), task: call('atm:task'), cancelTask: call('atm:cancelTask'),
+    list: call('atm:list'), saveWorkspace: call('atm:saveWorkspace'), get: call('atm:get'),
+    saveReference: call('atm:saveReference'), importReference: call('atm:importReference'), importChannel: call('atm:importChannel'), analyzeReference: call('atm:analyzeReference'), removeReference: call('atm:removeReference'),
+    analyze: call('atm:analyze'), saveSkill: call('atm:saveSkill'), activateSkill: call('atm:activateSkill'),
+    createProduction: call('atm:createProduction'), production: call('atm:production'),
+    saveOutline: call('atm:saveOutline'), savePublishingPackage: call('atm:savePublishingPackage'),
+    generatePackage: call('atm:generatePackage'), savePackage: call('atm:savePackage'),
+    generateThumbnail: call('atm:generateThumbnail'), importArtwork: call('atm:importArtwork'), renderThumbnail: call('atm:renderThumbnail')
+  },
   projects: {
     list: call('projects:list'),
     create: call('projects:create'),
@@ -49,6 +62,7 @@ const api: StudioApi = {
     setActive: call('assets:setActive'),
     setWords: call('assets:setWords'),
     pickMusic: call('assets:pickMusic'),
+    pickSfx: call('assets:pickSfx'),
     pickImage: call('assets:pickImage'),
     pickVideo: call('assets:pickVideo')
   },
@@ -67,11 +81,22 @@ const api: StudioApi = {
   models: {
     list: call('models:list')
   },
+  flowImages: {
+    exportSummary: call('flowImages:exportSummary'),
+    exportZip: call('flowImages:exportZip'),
+    reference: call('flowImages:reference'),
+    importImage: call('flowImages:importImage'),
+    importUrl: call('flowImages:importUrl'),
+    changeImage: call('flowImages:changeImage'),
+    previewZip: call('flowImages:previewZip'),
+    applyZip: call('flowImages:applyZip')
+  },
   exporter: {
     start: call('export:start'),
     defaultFolder: call('export:defaultFolder'),
     pickFolder: call('export:pickFolder'),
     reveal: call('export:reveal'),
+    downloadProject: call('export:downloadProject'),
     flowData: call('export:flowData')
   },
   app: {
@@ -95,4 +120,4 @@ const api: StudioApi = {
   }
 }
 
-contextBridge.exposeInMainWorld('api', api)
+contextBridge.exposeInMainWorld('api', { ...api, isDesktop: true })

@@ -66,13 +66,13 @@ export async function listModels(kind: 'text' | 'tts'): Promise<ModelOption[]> {
 }
 
 /** Structured JSON output; falls back to schema-in-prompt for models without JSON mode (e.g. Gemma). */
-export async function generateJson(model: string, system: string, prompt: string, schema: object): Promise<unknown> {
+export async function generateJson(model: string, system: string, prompt: string, schema: object, signal?: AbortSignal): Promise<unknown> {
   const ai = client()
   try {
     const res = await ai.models.generateContent({
       model,
       contents: prompt,
-      config: { systemInstruction: system, responseMimeType: 'application/json', responseJsonSchema: schema }
+      config: { systemInstruction: system, responseMimeType: 'application/json', responseJsonSchema: schema, abortSignal: signal }
     })
     return JSON.parse(res.text ?? '')
   } catch (e) {
@@ -84,7 +84,8 @@ export async function generateJson(model: string, system: string, prompt: string
       model,
       contents: prompt,
       config: {
-        systemInstruction: `${system}\n\nReply with ONE JSON object only (no markdown, no commentary) that matches this JSON Schema:\n${JSON.stringify(schema)}`
+        systemInstruction: `${system}\n\nReply with ONE JSON object only (no markdown, no commentary) that matches this JSON Schema:\n${JSON.stringify(schema)}`,
+        abortSignal: signal
       }
     })
     return extractJson(res.text ?? '')

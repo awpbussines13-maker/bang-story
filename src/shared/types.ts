@@ -4,7 +4,7 @@ export type TtsProvider = 'gemini' | 'elevenlabs' | '9router'
 export type LlmProvider = 'gemini' | 'openrouter' | 'groq' | 'custom' | '9router'
 export type ApiProvider = 'higgsfield' | 'gemini' | 'elevenlabs' | 'openrouter' | 'groq' | 'custom' | '9router'
 export type ImageProvider = 'higgsfield' | '9router'
-/** Where a live model list comes from: an LLM provider, or a TTS catalog. */
+/** Where a model list comes from: a provider, or a TTS/image catalog. */
 export type ModelSource = LlmProvider | 'gemini-tts' | 'elevenlabs' | '9router-tts' | '9router-image'
 export type MotionType = 'camera' | 'video'
 export type CameraPresetId = 'zoomin' | 'zoomout' | 'panleft' | 'panright' | 'kenburns' | 'shake' | 'static'
@@ -17,6 +17,8 @@ export type CaptionSize = 'kecil' | 'sedang' | 'besar'
 export type Step = 1 | 2 | 3 | 4
 
 export interface EditorSettings {
+  soundDesign?: SoundDesign
+  normalizeAudio?: boolean
   captionStyle: CaptionStyleId
   captionPosition: CaptionPosition
   captionSize: CaptionSize
@@ -110,7 +112,7 @@ export interface Project {
   ttsProvider: TtsProvider
   ttsVoice: string
   /** Image provider: 'higgsfield' or '9router' */
-  imageProvider?: ImageProvider
+  imageProvider?: ImageProvider | null
   /** Higgsfield endpoint ids; null falls back to the app default. */
   imageModel: string | null
   videoModel: string | null
@@ -129,7 +131,9 @@ export interface Character {
   projectId: string
   name: string
   description: string
+  referencePrompt: string
   sheetAssetId: string | null
+  referenceImageAssetId: string | null
   sort: number
 }
 
@@ -164,12 +168,43 @@ export interface Clip {
   voiceInMs: number
   voiceOutMs: number | null
   voiceStartMs: number
+  importedImageAssetId: string | null
+  imageFit: ImageFit
   imageAssetId: string | null
   videoAssetId: string | null
   audioAssetId: string | null
 }
 
-export type AssetKind = 'image' | 'video' | 'audio' | 'music' | 'overlay' | 'export'
+export type ImageFit = 'cover' | 'contain'
+
+export type SfxPreset = 'ambience' | 'pulse' | 'riser' | 'impact' | 'whoosh'
+
+export interface SfxCue {
+  id: string
+  clipId: string
+  label: string
+  assetId: string | null
+  preset: SfxPreset | null
+  startMs: number
+  durationMs: number
+  inMs: number
+  sourceDurationMs?: number
+  gainDb: number
+  fadeInMs: number
+  fadeOutMs: number
+  muted: boolean
+  manual: boolean
+  bed: boolean
+}
+
+export interface SoundDesign {
+  enabled: boolean
+  cues: SfxCue[]
+  planHash?: string
+  warnings?: string[]
+}
+
+export type AssetKind = 'image' | 'video' | 'audio' | 'music' | 'sfx' | 'audio-mix' | 'overlay' | 'export'
 
 export interface WordTiming {
   text: string
@@ -205,7 +240,7 @@ export interface Asset {
 }
 
 /** "narration" voices several scenes in one take and cuts it per scene. */
-export type JobKind = 'story' | 'image' | 'sheet' | 'video' | 'tts' | 'narration' | 'align' | 'export'
+export type JobKind = 'story' | 'image' | 'sheet' | 'video' | 'tts' | 'narration' | 'align' | 'export' | 'character-review' | 'sound-plan' | 'audio-mix'
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled'
 
 export interface Job {
@@ -241,14 +276,15 @@ export interface ProjectSummary {
   clipCount: number
   totalMs: number
   coverUrl: string | null
+  hasExport: boolean
   updatedAt: number
 }
 
 /** What the renderer sends on save. Asset links are owned by the main process and never overwritten by a save. */
 export interface ProjectSnapshot {
   project: Omit<Project, 'createdAt' | 'updatedAt' | 'coverAssetId'>
-  characters: Omit<Character, 'sheetAssetId'>[]
-  clips: Omit<Clip, 'imageAssetId' | 'videoAssetId' | 'audioAssetId'>[]
+  characters: Omit<Character, 'sheetAssetId' | 'referenceImageAssetId'>[]
+  clips: Omit<Clip, 'imageAssetId' | 'videoAssetId' | 'audioAssetId' | 'importedImageAssetId' | 'imageFit'>[]
 }
 
 export interface NewProjectInput {
@@ -284,6 +320,7 @@ export interface VoiceOption {
   id: string
   name: string
   description: string
+  group?: string
   previewUrl?: string | null
 }
 
@@ -304,10 +341,13 @@ export interface AppSettings {
   videoModel: string
   /** Time captions against the real voice with Whisper after narration is made (when the model is present). */
   whisperAuto: boolean
+  /** Review generated scene images automatically; disable for manual inspection. */
+  imageReviewEnabled: boolean
   /** 9Router settings */
   nineRouterBaseUrl: string
   nineRouterTtsModel: string
   nineRouterImageModel: string
+  nineRouterImageConcurrency: number
   imageProvider: ImageProvider
 }
 
