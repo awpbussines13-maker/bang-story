@@ -1,3 +1,4 @@
+import { getStyle, STICKMAN_CHARACTER_STYLE } from './styles'
 import type { AspectRatio, Asset, Clip, ImageFit } from './types'
 
 export const FLOW_IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp'
@@ -70,7 +71,23 @@ export function sceneImageFit(clip: Pick<Clip, 'importedImageAssetId' | 'imageFi
   return clip.importedImageAssetId ? clip.imageFit : 'cover'
 }
 
-export function makeReferencePrompt(name: string, description: string): string {
+const REFERENCE_STYLE_PREFIX = 'Project visual style ('
+
+export function withReferenceStyle(prompt: string, styleId: string): string {
+  // Replacing the generated paragraph preserves the editable character details across style changes.
+  const body = prompt.trim().replace(/^Project visual style \([^\r\n]+\): [^\r\n]*(?:\r?\n|$)/, '').trim()
+  if (!body) return ''
+  const style = getStyle(styleId)
+  const rendering = style.id === 'stickman'
+    ? STICKMAN_CHARACTER_STYLE + ' Single style only — do not mix a realistic human version with a stickman version in the same sheet.'
+    : `Draw every view as ${style.characterHint}. Single style only — use this rendering style in every view.`
+  return `${REFERENCE_STYLE_PREFIX}${style.name}): ${rendering}\n\n${body}`
+}
+
+export function makeReferencePrompt(name: string, description: string, styleId: string): string {
   const appearance = description.trim().replace(/\s+/g, ' ').replace(/[.!?]+$/, '')
-  return appearance ? `Character reference sheet for ${name.trim() || 'this character'}. ${appearance}. Show consistent proportions, clothing and colors in front, three-quarter and side views. Use a plain background and even lighting.` : ''
+  return appearance ? withReferenceStyle(
+    `Character reference sheet for ${name.trim() || 'this character'}. ${appearance}. Show the same age, hair, proportions, clothing and colors in front, three-quarter and side views. Use a plain background and even lighting.`,
+    styleId
+  ) : ''
 }

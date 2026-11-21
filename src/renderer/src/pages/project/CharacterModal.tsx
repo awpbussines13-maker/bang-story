@@ -30,6 +30,7 @@ const LOOK_HINT =
 
 function NewCharacter({ onClose, onCreated }: { onClose: () => void; onCreated?: (id: string) => void }) {
   const { addCharacter } = useProject()
+  const styleId = useProject((s) => s.project!.styleId)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [referencePrompt, setReferencePrompt] = useState<string | null>(null)
@@ -38,7 +39,7 @@ function NewCharacter({ onClose, onCreated }: { onClose: () => void; onCreated?:
   const [error, setError] = useState('')
   const savedId = useRef<string | null>(null)
   const typed = !!(name.trim() || description.trim() || referencePrompt?.trim() || reference)
-  const prompt = referencePrompt ?? makeReferencePrompt(name, description)
+  const prompt = referencePrompt ?? makeReferencePrompt(name, description, styleId)
 
   const save = async (): Promise<void> => {
     if (!name.trim() || saving) return
@@ -111,11 +112,11 @@ function NewCharacter({ onClose, onCreated }: { onClose: () => void; onCreated?:
 }
 
 function EditCharacter({ characterId, onClose }: { characterId: string | null; onClose: () => void }) {
-  const { characters, assets, jobs, updateCharacter, removeCharacter, flush, clips } = useProject()
+  const { characters, assets, jobs, updateCharacter, removeCharacter, flush, clips, project } = useProject()
   const { toast } = useApp()
   const [uploading, setUploading] = useState(false)
   const c = characters.find((x) => x.id === characterId)
-  if (!c) return null
+  if (!c || !project) return null
   const sheet = c.sheetAssetId ? assets[c.sheetAssetId] : null
   const reference = c.referenceImageAssetId ? assets[c.referenceImageAssetId] : null
   const job = jobFor(jobs, 'sheet', { characterId: c.id })
@@ -195,7 +196,7 @@ function EditCharacter({ characterId, onClose }: { characterId: string | null; o
         </Field>
       </div>
       <ReferencePrompt value={c.referencePrompt} onChange={(referencePrompt) => updateCharacter(c.id, { referencePrompt })}
-        onGenerate={() => updateCharacter(c.id, { referencePrompt: makeReferencePrompt(c.name, c.description) })} />
+        onGenerate={() => updateCharacter(c.id, { referencePrompt: makeReferencePrompt(c.name, c.description, project.styleId) })} />
       <ReferenceFile onChange={(file) => { if (file) void upload(file) }} disabled={uploading} />
       {reference && (
         <div className="flex items-center gap-3">

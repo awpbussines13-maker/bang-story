@@ -1,4 +1,4 @@
-import { characterFlowIds, clipFlowId, makeReferencePrompt } from '@shared/flowV2'
+import { characterFlowIds, clipFlowId, makeReferencePrompt, withReferenceStyle } from '@shared/flowV2'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
@@ -312,7 +312,11 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
       `INSERT INTO characters (id, project_id, name, description, sort, reference_prompt) VALUES (@id, @projectId, @name, @description, @sort, @referencePrompt)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, sort = excluded.sort, reference_prompt = excluded.reference_prompt`
     )
-    for (const c of snap.characters) upChar.run({ ...c, projectId: p.id, referencePrompt: c.referencePrompt ?? previous.characters.find(old => old.id === c.id)?.referencePrompt ?? '' })
+    const oldPrompts = new Map(previous.characters.map((c) => [c.id, c.referencePrompt]))
+    for (const c of snap.characters) {
+      const prompt = c.referencePrompt ?? oldPrompts.get(c.id) ?? ''
+      upChar.run({ ...c, projectId: p.id, referencePrompt: withReferenceStyle(prompt, p.styleId) })
+    }
 
     const clipIds = snap.clips.map((c) => c.id)
     db.prepare(`DELETE FROM clips WHERE project_id = ? AND id NOT IN (${clipIds.map(() => '?').join(',') || "''"})`).run(
@@ -506,6 +510,7 @@ export function replaceStory(
   clips: StoryClip[]
 ): void {
   const db = getDb()
+  const { styleId } = getProject(projectId)
   db.transaction(() => {
     db.prepare('DELETE FROM clips WHERE project_id = ?').run(projectId)
     db.prepare('DELETE FROM characters WHERE project_id = ?').run(projectId)
@@ -519,7 +524,7 @@ export function replaceStory(
         c.name,
         c.description,
         i,
-        makeReferencePrompt(c.name, c.description)
+        makeReferencePrompt(c.name, c.description, styleId)
       )
     })
     clips.forEach((c, i) => {
@@ -589,6 +594,7 @@ function castIds(byName: Map<string, string>, names: string[]): string[] {
 function upsertCast(projectId: string, characters: { name: string; description: string }[]): Map<string, string> {
   const db = getDb()
   const existing = charactersOf(projectId)
+  const { styleId } = getProject(projectId)
   const byName = new Map(existing.map((c) => [c.name.trim().toLowerCase(), c.id]))
   const undescribed = new Map(existing.filter((c) => !c.description.trim()).map((c) => [c.id, c]))
   const complete = db.prepare("UPDATE characters SET description = ?, reference_prompt = CASE WHEN reference_prompt = '' THEN ? ELSE reference_prompt END WHERE id = ?")
@@ -601,11 +607,11 @@ function upsertCast(projectId: string, characters: { name: string; description: 
     if (!key) continue
     const known = byName.get(key)
     if (known) {
-      if (c.description.trim() && undescribed.delete(known)) complete.run(c.description, makeReferencePrompt(c.name, c.description), known)
+      if (c.description.trim() && undescribed.delete(known)) complete.run(c.description, makeReferencePrompt(c.name, c.description, styleId), known)
       continue
     }
     const id = randomUUID()
-    insert.run(id, projectId, c.name.trim(), c.description, sort++, makeReferencePrompt(c.name, c.description))
+    insert.run(id, projectId, c.name.trim(), c.description, sort++, makeReferencePrompt(c.name, c.description, styleId))
     byName.set(key, id)
   }
   return byName

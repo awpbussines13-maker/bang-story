@@ -22,6 +22,7 @@ export const STYLE_CATEGORIES: { id: StyleCategory | 'all'; label: string }[] = 
 ]
 
 const NO_TEXT = 'No text, no letters, no captions, no watermark, no logo.'
+export const STICKMAN_CHARACTER_STYLE = 'ALL characters are simple STICKMAN figures: thin black line bodies and limbs, plain round white heads, minimal cartoon faces, no realistic anatomy.'
 
 export const VISUAL_STYLES: VisualStyle[] = [
   {
@@ -32,7 +33,9 @@ export const VISUAL_STYLES: VisualStyle[] = [
     swatch: '#F2B266',
     ink: '#1F1D1A',
     prompt:
-      'Flat 2D cartoon illustration across the ENTIRE frame, including every background and prop. Restrained muted colors, simple filled shapes, clean bold outlines and minimal cel shading. Water, buildings, metal and weather are drawn flat, never photographed or rendered in 3D. No glossy reflections, photorealistic textures, volumetric lighting, bloom, HDR, depth-of-field blur or highly polished cinematic scenery. ALL characters are simple STICKMAN figures: thin black line bodies and limbs, plain round white heads, minimal cartoon faces, no realistic anatomy. When character sheets are supplied, copy their exact clothing, hair and accessories; reference clothing may cover the stick limbs. Never invent headwear absent from the sheet. Without sheets use simple role-appropriate costume pieces. Keep a clear readable composition and a consistent subdued illustrated palette. Backgrounds contain the scene location, never a blank white studio. ' +
+      'Flat 2D cartoon illustration across the ENTIRE frame, including every background and prop. Restrained muted colors, simple filled shapes, clean bold outlines and minimal cel shading. Water, buildings, metal and weather are drawn flat, never photographed or rendered in 3D. No glossy reflections, photorealistic textures, volumetric lighting, bloom, HDR, depth-of-field blur or highly polished cinematic scenery. ' +
+      STICKMAN_CHARACTER_STYLE +
+      ' When character sheets are supplied, copy their exact clothing, hair and accessories; reference clothing may cover the stick limbs. Never invent headwear absent from the sheet. Without sheets use simple role-appropriate costume pieces. Keep a clear readable composition and a consistent subdued illustrated palette. Backgrounds contain the scene location, never a blank white studio. ' +
       NO_TEXT,
     characterHint: 'a stickman figure with a round white head and thin black line limbs, wearing role-specific costume pieces'
   },

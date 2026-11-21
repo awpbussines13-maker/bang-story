@@ -1,3 +1,4 @@
+import { withReferenceStyle } from '@shared/flowV2'
 import { create } from 'zustand'
 import type { Asset, Character, Clip, Job, Project, ProjectBundle, ProjectSnapshot } from '@shared/types'
 import { errorText } from '../lib/format'
@@ -78,7 +79,7 @@ export const useProject = create<ProjectState>((set, get) => {
       set({
         loaded: true,
         project: b.project,
-        characters: b.characters,
+        characters: b.characters.map(c => ({ ...c, referencePrompt: withReferenceStyle(c.referencePrompt, b.project.styleId) })),
         clips: b.clips,
         assets: Object.fromEntries(b.assets.map((a) => [a.id, a])),
         jobs: Object.fromEntries(b.jobs.map((j) => [j.id, j])),
@@ -94,7 +95,14 @@ export const useProject = create<ProjectState>((set, get) => {
     select: (clipId) => set({ selectedClipId: clipId }),
 
     updateProject: (patch) => {
-      set({ project: { ...get().project!, ...patch } })
+      const { project, characters } = get()
+      const styleId = patch.styleId
+      set({
+        project: { ...project!, ...patch },
+        ...(styleId && styleId !== project?.styleId
+          ? { characters: characters.map(c => ({ ...c, referencePrompt: withReferenceStyle(c.referencePrompt, styleId) })) }
+          : {})
+      })
       touch()
     },
     updateEditor: (patch) => {

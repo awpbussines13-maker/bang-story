@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname } from 'node:path'
-import { FLOW_IMAGE_LIMIT, FLOW_ZIP_LIMIT, clipFlowId, flowClipLabel, type FlowImageChange, type FlowImportPreview, type FlowProjectV2 } from '@shared/flowV2'
+import { FLOW_IMAGE_LIMIT, FLOW_ZIP_LIMIT, clipFlowId, flowClipLabel, withReferenceStyle, type FlowImageChange, type FlowImportPreview, type FlowProjectV2 } from '@shared/flowV2'
 import { getStyle } from '@shared/styles'
 import type { Asset, Clip, ImageFit } from '@shared/types'
 import { getDb } from './db'
@@ -26,9 +26,10 @@ function flowManifest(projectId: string) {
     aspectRatio: project.aspectRatio,
     visualStyle: getStyle(project.styleId).prompt,
     characters: characters.map((c) => {
-      if (!c.referencePrompt.trim()) throw new Error(`Karakter ${c.name} belum punya prompt referensi. Isi dulu di dialog pemeran.`)
+      const referencePrompt = withReferenceStyle(c.referencePrompt, project.styleId)
+      if (!referencePrompt) throw new Error(`Karakter ${c.name} belum punya prompt referensi. Isi dulu di dialog pemeran.`)
       return {
-        id: c.flowId!, name: c.name, description: c.description, referencePrompt: c.referencePrompt.trim(),
+        id: c.flowId!, name: c.name, description: c.description, referencePrompt,
         referenceImage: (c.referenceImageAssetId ?? c.sheetAssetId) ? `characters/${c.flowId}-character-sheet.webp` : null
       }
     }),
